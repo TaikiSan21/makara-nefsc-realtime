@@ -47,3 +47,12 @@ smartToDf <- function(x) {
     result <- bind_rows(rows)
     result
 }
+
+readRealtimeDetection <- function(x) {
+    data <- read.csv(x, stringsAsFactors = FALSE)
+    data$UTC <- format(as.character(x$datetime_utc),
+                       format='%Y%m%d%H%M%S',
+                       tz='UTC'
+    )
+    data
+}

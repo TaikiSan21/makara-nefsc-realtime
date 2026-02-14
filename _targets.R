@@ -29,8 +29,10 @@ tar_source('functions/makara-realtime-functions.R')
 
 # Replace the target list below with your own:
 list(
+    # params and constants ----
     tar_target(params, {
         list(
+            force_download = NULL # any deployment codes to force detection redownload
         )
     }),
     tar_target(constants, {
@@ -47,19 +49,25 @@ list(
     tar_target(secrets, {
         read_yaml(secrets_file)
     }),
+    # smartsheets ----
     tar_target(rt_tracking_raw, {
         result <- readRealtimeTrackingSmart(secrets)
         result
     }),
     tar_target(rt_tracking, {
         result <- rt_tracking_raw
+        names(result) <- gsub('\\?', '', names(result))
         names(result) <- gsub('\\s?\\(makara\\)', '', names(result))
         result <- filter(
             result,
-            !is.na(organization_code)
+            !is.na(organization_code),
+            !platform_status %in% c('Planned - Collaborator'),
+            !have_detection_data %in% c('No (no manual analyses)', 
+                                        'No (no real-time)')
         )
         result
     }),
+    # deployments ----
     tar_target(deployments, {
         names <- names(templates$deployments)
         extraCols <- c('metadata_in_makara?',
@@ -68,7 +76,7 @@ list(
             rt_tracking,
             any_of(c(names, extraCols))
         )
-
+        
         numCols <- c('deployment_latitude', 
                      'deployment_longitude',
                      'deployment_water_depth_m')
@@ -77,6 +85,69 @@ list(
         }
         result
     }),
+    # detections ----
+    tar_target(detection_folder, 'detections'),
+    tar_target(detection_downloads, {
+        if(!dir.exists(detection_folder)) {
+            dir.create(detection_folder)
+        }
+        dl_status <- data.frame(
+            deployment_code = rt_tracking$deployment_code
+        ) %>% 
+            mutate(
+                file = paste0(deployment_code, '_detectiondata.csv'),
+                file = file.path(detection_folder, file),
+                url = gsub('\\.s?html', '', rt_tracking$analysis_dataset_url),
+                url = paste0(url, '_html/ptracks/manual_analysis.csv'),
+                downloaded = file.exists(file)
+            )
+        # redownload manually labeled and currently active - comment out during dev
+        # may want to adjust this to try and do an every 24h thing
+        redownload <- params$force_download
+        # redownload <- unique(c(
+        #     redownload,
+        #     rt_tracking$deployment_code[rt_tracking$platform_status == 'Active']
+        #     ))
+        if(!is.null(redownload) &&
+           length(redownload) > 0) {
+            dl_status$downloaded[
+                dl_status$deployment_code %in% redownload
+            ] <- FALSE
+        }
+        dl_status
+    }, cue = tar_cue('always')),
+    tar_target(do_download, {
+        result <- detection_downloads
+        badDl <- rep(FALSE, nrow(result))
+        for(i in 1:nrow(result)) {
+            if(isTRUE(result$downloaded[i])) {
+                next
+            }
+            tryDl <- try(download.file(url=result$url[i],
+                                       destfile=result$file[i],
+                                       quiet=TRUE),
+                         silent = TRUE)
+            # if download fails
+            if(inherits(tryDl, 'try-error') ||
+               tryDl != 0) {
+                badDl[i] <- TRUE
+                # if partial file or something gets dl'd remove it
+                if(file.exists(result$file[i])) {
+                    unlink(result$file[i])
+                }
+                next
+            }
+            
+            result$downloaded[i] <- TRUE
+        }
+        if(any(badDl)) {
+            warning(sum(badDl), ' downloads were unsuccessful (',
+                    printN(result$deployment_code[badDl], n=Inf),
+                    ')')
+        }
+        result
+    }),
+    # recordings ----
     tar_target(recordings, {
         names <- names(templates$recordings)
         extraCols <- c('metadata_in_makara?',
@@ -98,6 +169,7 @@ list(
         result$recording_device_lost <- result$platform_status == 'Lost'
         result
     }),
+    # combine and check ----
     tar_target(combined_data, {
         result <- list(deployments=deployments)
         result$recordings <- recordings
@@ -116,6 +188,7 @@ list(
         checkWarnings(out)
         out
     }),
+    # create output ----
     tar_target(output_dir, 'outputs'),
     tar_target(output, {
         writeTemplateOutput(db_check, folder=output_dir)
@@ -134,3 +207,5 @@ list(
 # missing lat/longs okay ot pull from det forms?
 # NA recording timezones
 # DFO org code is new
+
+# setup detection download checker
