@@ -27,12 +27,19 @@ tar_option_set(
 tar_source('functions/makara-functions.R')
 tar_source('functions/makara-realtime-functions.R')
 
+
+
 # Replace the target list below with your own:
 list(
     # params and constants ----
     tar_target(params, {
         list(
-            force_download = NULL # any deployment codes to force detection redownload
+            # any deployment codes to force detection redownload
+            force_download = NULL, 
+            # flag to always redownload detections for active deployments
+            update_active_deployment = FALSE,
+            # flag to skip all work for active deployments
+            skip_active_deployment = TRUE
         )
     }),
     tar_target(constants, {
@@ -53,7 +60,8 @@ list(
     tar_target(rt_tracking_raw, {
         result <- readRealtimeTrackingSmart(secrets)
         result
-    }),
+    },
+    cue=tar_cue('always')),
     tar_target(rt_tracking, {
         result <- rt_tracking_raw
         names(result) <- gsub('\\?', '', names(result))
@@ -65,23 +73,11 @@ list(
             !have_detection_data %in% c('No (no manual analyses)', 
                                         'No (no real-time)')
         )
-        result
-    }),
-    # deployments ----
-    tar_target(deployments, {
-        names <- names(templates$deployments)
-        extraCols <- c('metadata_in_makara?',
-                       'platform_status')
-        result <- select(
-            rt_tracking,
-            any_of(c(names, extraCols))
-        )
-        
-        numCols <- c('deployment_latitude', 
-                     'deployment_longitude',
-                     'deployment_water_depth_m')
-        for(n in numCols) {
-            result[[n]] <- as.numeric(result[[n]])
+        if(isTRUE(params$skip_active_deployment)) {
+            result <- filter(
+                result,
+                platform_status != 'Active'
+            )
         }
         result
     }),
@@ -91,9 +87,7 @@ list(
         if(!dir.exists(detection_folder)) {
             dir.create(detection_folder)
         }
-        dl_status <- data.frame(
-            deployment_code = rt_tracking$deployment_code
-        ) %>% 
+        dl_status <- select(rt_tracking, deployment_code) %>% 
             mutate(
                 file = paste0(deployment_code, '_detectiondata.csv'),
                 file = file.path(detection_folder, file),
@@ -104,27 +98,26 @@ list(
         # redownload manually labeled and currently active - comment out during dev
         # may want to adjust this to try and do an every 24h thing
         redownload <- params$force_download
-        # redownload <- unique(c(
-        #     redownload,
-        #     rt_tracking$deployment_code[rt_tracking$platform_status == 'Active']
-        #     ))
+        if(isTRUE(params$update_active_deployment)) {
+            redownload <- unique(c(
+                redownload,
+                rt_tracking$deployment_code[rt_tracking$platform_status == 'Active']
+            ))
+        }
         if(!is.null(redownload) &&
            length(redownload) > 0) {
             dl_status$downloaded[
                 dl_status$deployment_code %in% redownload
             ] <- FALSE
         }
-        dl_status
-    }, cue = tar_cue('always')),
-    tar_target(do_download, {
-        result <- detection_downloads
-        badDl <- rep(FALSE, nrow(result))
-        for(i in 1:nrow(result)) {
-            if(isTRUE(result$downloaded[i])) {
+        # dl_status
+        badDl <- rep(FALSE, nrow(dl_status))
+        for(i in 1:nrow(dl_status)) {
+            if(isTRUE(dl_status$downloaded[i])) {
                 next
             }
-            tryDl <- try(download.file(url=result$url[i],
-                                       destfile=result$file[i],
+            tryDl <- try(download.file(url=dl_status$url[i],
+                                       destfile=dl_status$file[i],
                                        quiet=TRUE),
                          silent = TRUE)
             # if download fails
@@ -132,19 +125,94 @@ list(
                tryDl != 0) {
                 badDl[i] <- TRUE
                 # if partial file or something gets dl'd remove it
-                if(file.exists(result$file[i])) {
-                    unlink(result$file[i])
+                if(file.exists(dl_status$file[i])) {
+                    unlink(dl_status$file[i])
                 }
                 next
             }
             
-            result$downloaded[i] <- TRUE
+            dl_status$downloaded[i] <- TRUE
         }
         if(any(badDl)) {
             warning(sum(badDl), ' downloads were unsuccessful (',
-                    printN(result$deployment_code[badDl], n=Inf),
+                    printN(dl_status$deployment_code[badDl], n=Inf),
                     ')')
         }
+        dl_status
+    }, cue = tar_cue('always')),
+    tar_target(detection_files, {
+        files <- list.files(detection_folder, full.names=TRUE)
+        downloaded <- filter(detection_downloads, downloaded == TRUE)
+        localNotDownload <- !files %in% downloaded$file
+        if(any(localNotDownload)) {
+            warning(sum(localNotDownload),
+                    ' files in detection_folder are not present',
+                    ' in Smartsheet metadata (',
+                    printN(basename(files[localNotDownload]), Inf),
+                    ')')
+            files <- files[!localNotDownload]
+        }
+        downloadNotLocal <- !downloaded$file %in% files
+        if(any(downloadNotLocal)) {
+            warning(sum(downloadNotLocal), 
+                    ' files do not exist and must be redownloaded (', 
+                    printN(downloaded$deployment_code[downloadNotLocal], Inf),
+                    ')')
+        }
+        files
+    }, 
+    cue=tar_cue('always'), format='file'
+    ),
+    tar_target(detections_raw, {
+        lapply(detection_files, function(x) {
+            result <- read.csv(x)
+            result$file <- basename(x)
+            result
+        })
+    }),
+    tar_target(detections_combined, {
+        # files <- list.files(detection_folder, full.names=TRUE)
+        data <- lapply(detections_raw, formatRealtimeDetection)
+        data <- sameNameCombiner(data)
+        if(length(data) > 1) {
+            warning('Column mismatch in some detection sheets')
+        }
+        bind_rows(data)
+    }),
+    # summary to use for filling NA vals later
+    tar_target(detections_summary, {
+        detToSummary(detections_combined, by='deployment_code')
+    }),
+    # deployments ----
+    tar_target(deployments, {
+        names <- names(templates$deployments)
+        extraCols <- c('metadata_in_makara?',
+                       'platform_status')
+        result <- select(
+            rt_tracking,
+            any_of(c(names, extraCols))
+        )
+        result$dynamic_management_platform <- TRUE
+        numCols <- c('deployment_latitude', 
+                     'deployment_longitude',
+                     'deployment_water_depth_m')
+        for(n in numCols) {
+            result[[n]] <- as.numeric(result[[n]])
+        }
+        result <- fillNAFromOther(result,
+                                  to_columns=c('deployment_datetime',
+                                               'deployment_longitude',
+                                               'deployment_latitude',
+                                               'recovery_datetime'),
+                                  detections_summary,
+                                  from_columns=c('start',
+                                                 'firstLong',
+                                                 'firstLat',
+                                                 'end'),
+                                  by='deployment_code',
+                                  create_missing=FALSE,
+                                  verbose=TRUE
+        )
         result
     }),
     # recordings ----
@@ -167,6 +235,15 @@ list(
         }
         result$recording_code <- constants$recording_code
         result$recording_device_lost <- result$platform_status == 'Lost'
+        result <- fillNAFromOther(result,
+                                  to_columns=c('recording_start_datetime',
+                                               'recording_end_datetime'),
+                                  detections_summary,
+                                  from_columns=c('start',
+                                                 'end'),
+                                  by='deployment_code',
+                                  verbose=TRUE
+        )
         result
     }),
     # combine and check ----
@@ -181,7 +258,6 @@ list(
         # out <- dropAlreadyDb(out, drop=!params$export_already_in_db)
         out <- checkMakTemplate(out,
                                 templates=templates,
-                                # mandatory=mandatory_fields,
                                 ncei=FALSE,
                                 dropEmpty = TRUE)
         # out <- checkDbValues(out, db)
@@ -203,9 +279,18 @@ list(
 
 # TODO ####
 
-# okay for just DMON2_RECORDING recording_code? any poss of multiple recs per deploy?
-# missing lat/longs okay ot pull from det forms?
-# NA recording timezones
-# DFO org code is new
+## okay for just DMON2_RECORDING recording_code? any poss of multiple recs per deploy?
 
-# setup detection download checker
+# NA recording timezones
+## DFO org code is new
+
+# do we want to create tracks for gliders? idk which these are
+
+# map analysts to names in diff formatting
+
+## ask if we want to store meta / detections for everything or skip any
+## orgs / deployments
+
+# Send j-dubs spreadsheet with some shit (see feb-17 email)
+
+
