@@ -44,7 +44,7 @@ list(
     }),
     tar_target(constants, {
         list(
-            recording_code = 'DMON2_RECORDING'
+            # recording_code = 'DMON2_RECORDING'
         )
     }),
     tar_target(templates, {
@@ -68,10 +68,10 @@ list(
         names(result) <- gsub('\\s?\\(makara\\)', '', names(result))
         result <- filter(
             result,
-            !is.na(organization_code),
             !platform_status %in% c('Planned - Collaborator'),
-            !have_detection_data %in% c('No (no manual analyses)', 
-                                        'No (no real-time)')
+            # !have_detection_data %in% c('No (no manual analyses)', 
+                                        # 'No (no real-time)'),
+            !is.na(organization_code)
         )
         if(isTRUE(params$skip_active_deployment)) {
             result <- filter(
@@ -110,6 +110,13 @@ list(
                 dl_status$deployment_code %in% redownload
             ] <- FALSE
         }
+        skipDownload <- rt_tracking$deployment_code[
+            rt_tracking$have_detection_data %in% 
+                c('No (no manual analyses)', 'No (no real-time)')
+        ]
+        dl_status$downloaded[
+            dl_status$deployment_code %in% skipDownload
+        ] <- TRUE
         # dl_status
         badDl <- rep(FALSE, nrow(dl_status))
         for(i in 1:nrow(dl_status)) {
@@ -199,17 +206,19 @@ list(
         for(n in numCols) {
             result[[n]] <- as.numeric(result[[n]])
         }
+        if(!'deployment_comments' %in% names(result)) {
+            result$deployment_comments <- NA
+        }
         result <- fillNAFromOther(result,
-                                  to_columns=c('deployment_datetime',
-                                               'deployment_longitude',
-                                               'deployment_latitude',
-                                               'recovery_datetime'),
+                                  to_columns=c('deployment_longitude',
+                                               'deployment_latitude'),
                                   detections_summary,
-                                  from_columns=c('start',
-                                                 'firstLong',
-                                                 'firstLat',
-                                                 'end'),
+                                  from_columns=c('firstLong',
+                                                 'firstLat'),
                                   by='deployment_code',
+                                  comment_columns=rep('deployment_comments', 2),
+                                  comment=c('Deployment location filled from detection sheet',
+                                            NA),
                                   create_missing=FALSE,
                                   verbose=TRUE
         )
@@ -233,8 +242,16 @@ list(
         for(n in numCols) {
             result[[n]] <- as.numeric(result[[n]])
         }
-        result$recording_code <- constants$recording_code
-        result$recording_device_lost <- result$platform_status == 'Lost'
+        # result$recording_code <- constants$recording_code
+        result<- mutate(result,
+                        recording_code = case_when(
+                            grepl('DMON2', recording_device_codes) ~ 'DMON2_RECORDING',
+                            grepl('DMON', recording_device_codes) ~ 'DMON_RECORDING',
+                            grepl('SOUNDTRAP', recording_device_codes) ~ 'SOUNDTRAP_RECORDING',
+                            .default = NA
+                        ),
+                        recording_device_lost = platform_status == 'Lost'
+        )
         result <- fillNAFromOther(result,
                                   to_columns=c('recording_start_datetime',
                                                'recording_end_datetime'),
@@ -242,6 +259,8 @@ list(
                                   from_columns=c('start',
                                                  'end'),
                                   by='deployment_code',
+                                  comment_columns = rep('recording_comments', 2),
+                                  comment = c("Recording start/end datetimes are taken from the start/end datetimes from the first and last periods on the real-time detection sheets because we don't currently have the raw audio for this deployment", NA),
                                   verbose=TRUE
         )
         result
@@ -285,12 +304,7 @@ list(
 ## DFO org code is new
 
 # do we want to create tracks for gliders? idk which these are
+## yes - from gcloud storage
 
-# map analysts to names in diff formatting
-
-## ask if we want to store meta / detections for everything or skip any
-## orgs / deployments
-
-# Send j-dubs spreadsheet with some shit (see feb-17 email)
-
+# db existo checking
 

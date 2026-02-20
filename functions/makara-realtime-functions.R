@@ -80,16 +80,16 @@ formatRealtimeDetection <- function(x) {
         x$notes[anaComment][!noNote] <- paste0(x$notes[anaComment][!noNote],
                                                '; ',
                                                x$analyst[anaComment][!noNote])
-        possAna <- unique(x$analyst[!anaComment])
-        possAna <- possAna[possAna != '']
-        if(length(possAna) == 1) {
-            x$analyst[anaComment] <- possAna
-        } else {
-            warning('"analyst" column comments moved to "notes", but',
-                    ' no single analyst in rest of values in deployment ',
-                    x$deployment_code[1])
-            x$analyst[anaComment] <- ''
-        }
+        # possAna <- unique(x$analyst[!anaComment])
+        # possAna <- possAna[possAna != '']
+        # if(length(possAna) == 1) {
+        #     x$analyst[anaComment] <- possAna
+        # } else {
+        #     warning('"analyst" column comments moved to "notes", but',
+        #             ' no single analyst in rest of values in deployment ',
+        #             x$deployment_code[1])
+        #     x$analyst[anaComment] <- ''
+        # }
     }
     speciesNames <- c(
         'fin',
@@ -106,7 +106,7 @@ formatRealtimeDetection <- function(x) {
         'other',
         'brydes'
     )
-    x <- fixRTAnalyst(x)
+    # x <- fixRTAnalyst(x)
     x <- pivot_longer(x,
                       cols=any_of(speciesNames),
                       names_to = 'species',
@@ -116,29 +116,30 @@ formatRealtimeDetection <- function(x) {
 }
 
 # correct should be name.name
-fixRTAnalyst <- function(x) {
-    vals <- unique(x$analyst)
-    hasDot <- grepl('\\.', vals)
-    isBlank <- vals == ''
-    if(all(isBlank)) {
-        warning('No analyst in deployment ', x$deployment_code[1])
-        return(x)
-    }
-    if(length(vals) == 2 &&
-       any(isBlank) &&
-       any(hasDot)) {
-        vals <- vals[hasDot]
-        hasDot <- TRUE
-        x$analyst <- vals
-    }
-    if(any(!hasDot)) {
-        warning('Unexpected analyst names in deployment ',
-                x$deployment_code[1],
-                '(', printN(vals[!hasDot]), ')'
-        )
-    }
-    x
-}
+# dont need - already made analysis_analysts column in smort
+# fixRTAnalyst <- function(x) {
+#     vals <- unique(x$analyst)
+#     hasDot <- grepl('\\.', vals)
+#     isBlank <- vals == ''
+#     if(all(isBlank)) {
+#         warning('No analyst in deployment ', x$deployment_code[1])
+#         return(x)
+#     }
+#     if(length(vals) == 2 &&
+#        any(isBlank) &&
+#        any(hasDot)) {
+#         vals <- vals[hasDot]
+#         hasDot <- TRUE
+#         x$analyst <- vals
+#     }
+#     if(any(!hasDot)) {
+#         warning('Unexpected analyst names in deployment ',
+#                 x$deployment_code[1],
+#                 '(', printN(vals[!hasDot]), ')'
+#         )
+#     }
+#     x
+# }
 
 sameNameCombiner <- function(x) {
     if(is.character(x)) {
@@ -167,10 +168,22 @@ sameNameCombiner <- function(x) {
     combOld
 }
 
-fillNAFromOther <- function(x, to_columns, y, from_columns, by, create_missing=FALSE, verbose=FALSE) {
+fillNAFromOther <- function(x, to_columns, 
+                            y, from_columns, 
+                            by, 
+                            comment_columns=NULL,
+                            comment,
+                            create_missing=FALSE, 
+                            verbose=FALSE) {
     if(length(to_columns) != length(from_columns)) {
         stop('to_columns and from_columns must have same length')
     }
+    if(!is.null(comment_columns) &&
+       (length(comment_columns) != length(to_columns) ||
+        length(comment_columns) != length(comment))) {
+        stop('comment_columns and comment must have same length as to_columns')
+    }
+    byDNE <- character(0)
     for(c in seq_along(to_columns)) {
         if(!to_columns[c] %in% names(x)) {
             if(isFALSE(create_missing)) {
@@ -195,6 +208,10 @@ fillNAFromOther <- function(x, to_columns, y, from_columns, by, create_missing=F
         nFilled <- 0
         charCol <- is.character(x[[to_columns[c]]])
         for(ix in which(isNA)) {
+            if(!x[[by]][ix] %in% y[[by]]) {
+                byDNE <- c(byDNE, x[[by]][ix])
+                next
+            }
             newVal <- y[[from_columns[c]]][y[[by]] == x[[by]][ix]]
             if(inherits(newVal, 'POSIXct') &&
                charCol) {
@@ -204,13 +221,34 @@ fillNAFromOther <- function(x, to_columns, y, from_columns, by, create_missing=F
                 nFilled <- nFilled + 1
             }
             x[[to_columns[c]]][ix] <- newVal
+            if(!is.null(comment_columns) &&
+               !is.na(comment[c])) {
+                x[[comment_columns[c]]][ix] <- combineComment(x[[comment_columns[c]]][ix], 
+                                                          comment[c],
+                                                          sep=';')
+            }
+            
         }
         if(verbose) {
             message('Filled ', nFilled, ' values out of ',
                     sum(isNA), ' NA in column ', to_columns[c])
         }
     }
+    if(length(byDNE) > 0) {
+        byDNE <- unique(byDNE)
+        warning(length(byDNE), ' "', by, '"s (',
+                printN(byDNE), 
+                ') did not exist in the filling',
+                ' dataset, NAs were not filled')
+    }
     x
+}
+
+combineComment <- function(x, y, sep=';') {
+    if(is.na(x) | x == '') {
+        return(y)
+    }
+    paste0(x, sep, y)
 }
 
 detToSummary <- function(x, by=NULL) {
