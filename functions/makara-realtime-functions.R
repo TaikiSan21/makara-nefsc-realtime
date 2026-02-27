@@ -48,7 +48,7 @@ smartToDf <- function(x) {
     result
 }
 
-formatRealtimeDetection <- function(x) {
+baseDetectionLoader <- function(x) {
     # these are missing analyst column
     switch(basename(x$file[1]),
            'WHOI_SBNMS_201412_WE04_detectiondata.csv' = {
@@ -63,6 +63,7 @@ formatRealtimeDetection <- function(x) {
                         format='%Y%m%d%H%M%S',
                         tz='UTC'
     )
+    x <- arrange(x, end)
     x$start <- x$end - 15 * 60 # start 15 min before
     endEarly <- x$end[1:(nrow(x)-1)] > x$start[2:nrow(x)]
     if(any(endEarly)) {
@@ -80,16 +81,6 @@ formatRealtimeDetection <- function(x) {
         x$notes[anaComment][!noNote] <- paste0(x$notes[anaComment][!noNote],
                                                '; ',
                                                x$analyst[anaComment][!noNote])
-        # possAna <- unique(x$analyst[!anaComment])
-        # possAna <- possAna[possAna != '']
-        # if(length(possAna) == 1) {
-        #     x$analyst[anaComment] <- possAna
-        # } else {
-        #     warning('"analyst" column comments moved to "notes", but',
-        #             ' no single analyst in rest of values in deployment ',
-        #             x$deployment_code[1])
-        #     x$analyst[anaComment] <- ''
-        # }
     }
     speciesNames <- c(
         'fin',
@@ -112,6 +103,57 @@ formatRealtimeDetection <- function(x) {
                       names_to = 'species',
                       values_to = 'presence'
     )
+    x
+}
+
+formatDetectionData <- function(x) {
+    colMap <- list(
+        'start' = 'detection_start_datetime',
+        'end' = 'detection_end_datetime',
+        'species' = 'detection_sound_source_code',
+        'lat' = 'detection_latitude',
+        'lon' = 'detection_longitude',
+        'presence' = 'detection_result_code'
+    )
+    spMap <- list(
+        'fin' =  'FIWH',
+        'sei' = 'SEWH', 
+        'right' = 'RIWH',
+        'humpback' = 'HUWH',
+        'blue' = 'BLWH',
+        'beluga' = 'BELU',
+        'killer' = 'KIWH',
+        'bearded' = 'BESE',
+        'bowhead' = 'BOWH',
+        'walrus' = 'WALR',
+        'airgun' = 'RV-G', #maybe UNAN ? dont see one CHECK
+        'other' = 'OTHE', # CHECK
+        'brydes' = 'BRWH'
+    )
+    callMap <- list(
+        'FIWH' = 'FIWH_20HZ',
+        'BLWH' = 'BLWH_SONG',
+        'RIWH' = 'RW_UPCALL',
+        'HUWH' = 'HUWH_MIX',
+        'SEWH' = 'SEWH_DS80HZ', # END FROM bott mount
+        'BELU' = 'OD_MIX',
+        'KIWH' = 'OD_MIX',
+        'BESE' = 'BESE_MIX',
+        'BOWH' = 'BOWH_MIX',
+        'WALR' = 'WALR_MIX',
+        'RV-G' = 'TEMP',
+        'OTHE' = 'TEMP',
+        'BRWH' = 'BRWH_MIX'
+    )
+    resultMap <- list(
+        'absent' = 'NOT_DETECTED',
+        'maybe' = 'POSSIBLY_DETECTED',
+        'present' = 'DETECTED'
+        )
+    names(x) <- myRenamer(names(x), colMap)
+    x$detection_sound_source_code <- myRenamer(x$detection_sound_source_code, map=spMap)
+    x$detection_call_type_code <- myRenamer(x$detection_sound_source_code, map=callMap)
+    x$detection_result_code <- myRenamer(x$detection_result_code, map=resultMap)
     x
 }
 

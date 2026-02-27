@@ -1,6 +1,14 @@
 # Generic Makara Functions ----
 # Packages: dplyr, tidyr, lubridate, makaraValidatr
 
+## Updating code ----
+# uncomment this chunk to force janky single-file update of my common functions
+# updateFunctions <- download.file('https://api.github.com/repos/TaikiSan21/makaraHelpers/contents/R/makara-functions.R',
+#                      destfile = 'functions/makara-functions.R',
+#                      method='libcurl',
+#                      headers=c('Accept'= 'application/vnd.github.v3.raw'),
+#                      extra='-O -L')
+
 ## Functions ----
 # map is list of form old=new
 # renames either values in a vector or names of dataframe
@@ -158,6 +166,17 @@ checkMakTemplate <- function(x, templates, ncei=FALSE, dropEmpty=FALSE) {
         thisMand <- mandatory[[n]]$always
         thisNcei <- mandatory[[n]]$ncei
         thisData <- x[[n]]
+        # special case detections no mand locals
+        if(n == 'detections') {
+            if(!'localization_latitude' %in% names(thisData) ||
+               all(is.na(thisData$localization_latitude))) {
+                thisMand <- thisMand[thisMand != 'localization_method_code']
+            }
+            if(!'localization_depth_m' %in% names(thisData) ||
+               all(is.na(thisData$localization_depth_m))) {
+                thisMand <- thisMand[thisMand != 'localization_depth_method_code']
+            }
+        }
         # checking that i didnt goof mandatory names
         missMand <- !thisMand  %in% names(thisTemp)
         if(any(missMand)) {
@@ -428,44 +447,47 @@ checkDbValues <- function(x, db) {
 # Checks if deployments, recordings, and recording_intervals
 # are already in makara 
 checkAlreadyDb <- function(x, db) {
-    # deployment and recording checko
-    dep_rec <- db$recordings %>% 
-        mutate(JOINCHECK=TRUE)
-    depCheck <- left_join(
-        x$deployments,
-        distinct(select(dep_rec, organization_code, deployment_code, JOINCHECK)),
-        by=c('organization_code', 'deployment_code')
+    joinRequirements <- list(
+        'deployments' = c('organization_code', 'deployment_code'),
+        'recordings' = c('organization_code', 'deployment_code', 'recording_code'),
+        'recordings_intervals' = c('deployment_code', 'recording_code', 'recording_interval_start_datetime'),
+        'analyses' = c('deployment_organization_code', 'deployment_code', 'analysis_code')
     )
-    newDep <- is.na(depCheck$JOINCHECK)
-    x$deployments$new <- newDep
-    recCheck <- left_join(
-        x$recordings,
-        dep_rec,
-        by=c('organization_code', 'deployment_code', 'recording_code')
-    )
-    newRec <- is.na(recCheck$JOINCHECK)
-    x$recordings$new <- newRec
-    newDep <- sum(x$deployments$new)
-    newRec <- sum(x$recordings$new)
-    message(newDep, ' out of ', nrow(x$deployments), ' deployments are new (not yet in Makara)')
-    message(newRec , ' out of ', nrow(x$recordings), ' recordings are new (not yet in Makara)')
-    if('recording_intervals' %in% names(x)) {
-        intData <- db$recording_intervals %>% 
-            select(deployment_code, recording_code, 
-                   recording_interval_start_datetime) %>% 
-            mutate(JOINCHECK=TRUE,
-                   recording_interval_start_datetime=format(recording_interval_start_datetime, 
-                                                            format='%Y-%m-%d %H:%M:%S'))
-        intCheck <- left_join(
-            x$recording_intervals,
-            intData,
-            by=c('deployment_code', 'recording_code', 'recording_interval_start_datetime'))
-        newInt <- is.na(intCheck$JOINCHECK)
-        x$recording_intervals$new <- newInt
-        newInt <- sum(x$recording_intervals$new)
-        message(newInt, ' out of ', nrow(x$recording_intervals), 
-                ' recording_intervals are new (not yet in Makara)')
+    for(j in names(x)) {
+        if(!j %in% names(db)) {
+            warning('Could not check table ', j, ', was not in DB')
+            next
+        }
+        if(!j %in% names(joinRequirements)) {
+            warning('No requirements listed for table ', j, ', did not check')
+            next
+        }
+        if(j == 'recording_intervals') {
+            db[[j]]$recording_interval_start_datetime <- format(db[[j]]$recording_interval_start_datetime,
+                                                                format='%Y-%m-%d %H:%M:%S')
+        }
+        if(j %in% names(x)) {
+            x[[j]] <- doJoinCheck(x[[j]], db[[j]], by=joinRequirements[[j]], name=j)
+        }
     }
+    
+    x
+}
+
+# check if x is already in y by joining
+doJoinCheck <- function(x, y, by, name) {
+    # x <- select(x, all_of(by))
+    y <- distinct(select(y, all_of(by)))
+    y$JOINCHECK <- TRUE
+    x <- left_join(
+        x,
+        y,
+        by=by
+    )
+    newX <- is.na(x$JOINCHECK)
+    x$JOINCHECK <- NULL
+    x$new <- newX
+    message(sum(newX), ' out of ', nrow(x), ' ', name, ' are new (not yet in Makara)')
     x
 }
 
@@ -535,5 +557,80 @@ formatBasicTemplates <- function() {
             result[[n]][[col]] <- as.logical(result[[n]][[col]])
         }
     }
+    result
+}
+
+downloadBqMakara <- function(project='ggn-nmfs-pacm-dev-1', dataset='makara') {
+    ds <- bq_dataset(project, dataset)
+    tb_ref <- bq_dataset_query(ds, query = "select * from view_reference_codes")
+    df_ref <- bq_table_download(tb_ref)
+    
+    tb_org <- bq_dataset_query(ds, query = "select * from view_organization_codes")
+    df_org <- bq_table_download(tb_org)
+    
+    dep_rec_q <- bq_dataset_query(ds, query='select
+                            d.organization_code,
+                            d.deployment_code,
+                            d.deployment_datetime,
+                            d.recovery_datetime,
+                            d.deployment_alias,
+                            r.recording_start_datetime,
+                            r.recording_end_datetime,
+                            r.recording_usable_start_datetime,
+                            r.recording_usable_end_datetime,
+                            r.recording_code
+                            from
+                            deployments d
+                            left join
+                            recordings r
+                            on d.id = r.deployment_id')
+    dep_rec_df <- bq_table_download(dep_rec_q)
+    list(db_ref=df_ref,
+         db_org=df_org,
+         db_dep_rec=dep_rec_df)
+}
+
+# transform into list of db$table_name
+formatBqMakara <- function(db_raw) {
+    result <- split(db_raw$db_org, db_raw$db_org$table)
+    result <- lapply(result, function(x) {
+        code_prefix <- switch(
+            x$table[1],
+            'analyses' = 'analysis_code',
+            paste0(gsub('s$', '', x$table[1]), '_code')
+        )
+        names(x)[3] <- code_prefix
+        keepCol <- which(sapply(x, function(col) !all(is.na(col))))
+        x[keepCol]
+    })
+    result$recording_intervals <- db_raw$db_rec_int
+    refs <- split(db_raw$db_ref, db_raw$db_ref$table)
+    refs <- lapply(refs, function(x) {
+        if(x$table[1] == 'call_types_sound_sources') {
+            # split_code <- str_split(x$code, pattern=':', simplify=TRUE)
+            split_code <- t(matrix(unlist(strsplit(x$code, split=':')), nrow=2))
+            x$soundsource_id <- split_code[ ,2]
+            x$calltype_id <- split_code[, 1]
+            return(x)
+        }
+        code_prefix <- switch(
+            x$table[1],
+            'analyses' = 'analysis_code',
+            paste0(gsub('s$', '', x$table[1]), '_code')
+        )
+        names(x)[3] <- code_prefix
+        keepCol <- which(sapply(x, function(col) !all(is.na(col))))
+        x[keepCol]
+    })
+    for(table in names(refs)) {
+        result[[table]] <- refs[[table]]
+    }
+    result$deployments_recordings <- db_raw$db_dep_rec
+    result$deployments <- left_join(
+        result$deployments,
+        distinct(select(result$deployments_recordings, organization_code, deployment_code, deployment_alias)),
+        by=c('organization_code', 'deployment_code'),
+        relationship='one-to-one'
+    )
     result
 }
