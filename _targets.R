@@ -48,7 +48,7 @@ list(
     tar_target(params, {
         list(
             new_org = list(code='DFO', name='JUST FOR CHECKS'),
-            new_call = list(code='TEMP', name='JUST FOR CHECKS'),
+            # new_call = list(code='TEMP', name='JUST FOR CHECKS'),
             # any deployment codes to force detection redownload
             force_download = NULL, 
             # flag to always redownload detections for active deployments
@@ -56,8 +56,13 @@ list(
             # flag to skip all work for active deployments
             skip_active_deployment = TRUE,
             # flag to skip data already in Makara (unless needs update)
-            skip_already_makara = TRUE,
-            split_analyses = TRUE
+            skip_already_makara = FALSE,
+            # split into 1 ana per species vs 1 ana all species
+            split_analyses = FALSE,
+            # skip uploading UAF_AK and OSU_AK ana/dets, metadata only
+            skip_AK_analysis = TRUE,
+            # drop_species = c()
+            drop_species = c('RV-G', 'OTHE')
         )
     }),
     tar_target(constants, {
@@ -68,8 +73,12 @@ list(
             analysis_granularity_code = 'INTERVAL',
             # analysis_sample_rate_khz = 1,
             analysis_quality_code = 'FULLY_VALIDATED',
-            analysis_code = 'R4W_TEMP',
-            analysis_protocol_reference = 'Baumgartner & Mussoline 2011 (doi:10.1121/1.3562166); Davis et al. 2020 (doi:10.1111/gcb.15191)'
+            analysis_code = 'REAL_TIME_ANALYSIS',
+            analysis_json = as.character(toJSON(
+                list(MAX_MAHALANOBIS_DISTANCE = 3.0,
+                     CALL_LIBRARY = 'clnb_gom7')
+            )),
+            analysis_protocol_reference = 'Baumgartner & Mussoline 2011 (doi:10.1121/1.3562166); Wilder et al. 2026 (LFDCS 2.0 Reference Guide)'
         )
     }),
     tar_target(templates, {
@@ -119,6 +128,26 @@ list(
                                           'Yes (needs updating)')
             )
         }
+        result$skip_analysis <- result$have_detection_data %in% c('No (no manual analyses)', 'No (no real-time)')
+        if(isTRUE(params$skip_AK_analysis)) {
+            AKdeps <- grepl('^OSU_AK|^UAF_AK', result$deployment_code)
+            result$skip_analysis <- result$skip_analysis | AKdeps
+        }
+        # coalesce recording times
+        if(isTRUE(TRUE)) {
+            depsToFill <- c('OSU_AK_202307_UNIT595',
+                            'WHOI_SBNMS_201602_WE03',
+                            'WHOI_SBNMS_201512_WE10',
+                            'WHOI_SBNMS_201511_WE04',
+                            'UAF_AK_201309_WE167')
+            ix <- which(result$deployment_code %in% depsToFill)
+            result$recording_start_datetime[ix] <- coalesce(
+                result$recording_start_datetime[ix],
+                result$analysis_start_datetime[ix])
+            result$recording_end_datetime[ix] <- coalesce(
+                result$recording_end_datetime[ix],
+                result$analysis_end_datetime[ix])
+        }
         result
     }),
     # analyses ----
@@ -128,17 +157,19 @@ list(
                        'platform_status',
                        'organization_code',
                        'pacm_permissions',
+                       'skip_analysis',
                        'have_detection_data')
         result <- select(
             rt_tracking,
             any_of(c(names, extraCols)),
         ) %>% 
+            filter(!skip_analysis) %>% 
             rename(
                 deployment_organization_code = organization_code
             ) %>% 
             mutate(analysis_release_pacm = pacm_permissions != 'Requested/Approval pending',
                    analysis_release_data = analysis_release_pacm) %>% 
-            filter(!have_detection_data %in% c('No (no manual analyses)', 'No (no real-time)')) %>% 
+            # filter(!have_detection_data %in% c('No (no manual analyses)', 'No (no real-time)')) %>% 
             left_join(
                 select(recordings, 
                        deployment_code,
@@ -154,15 +185,34 @@ list(
             result$recording_sample_rate_khz / 2
         )
         ## split ana by analysis_sound_source_codes here ----
+        result$analysis_sound_source_codes <- gsub(' ', '', result$analysis_sound_source_codes)
         if(isTRUE(params$split_analyses)) {
             result <- result %>% 
-                mutate(analysis_sound_source_codes = gsub(' ', '', analysis_sound_source_codes),
-                   analysis_sound_source_codes = strsplit(analysis_sound_source_codes, ',')) %>% 
+                mutate(analysis_sound_source_codes = strsplit(analysis_sound_source_codes, ',')) %>% 
                 unnest(analysis_sound_source_codes) %>% 
                 mutate(analysis_code = paste0(analysis_sound_source_codes, '_ANALYSIS'))
+            
+            if(!is.null(params$drop_species) &&
+               length(params$drop_species) > 0) {
+                result <- filter(result, !analysis_sound_source_codes %in% params$drop_species)
+            }
         }
         ##
         if(isFALSE(params$split_analyses)) {
+            if(!'analysis_comments' %in% result) {
+                result$analysis_comments <- NA
+            }
+            for(i in 1:nrow(result)) {
+                splitSpec <- strsplit(result$analysis_sound_source_codes[i], ',')[[1]]
+                toDrop <- splitSpec[splitSpec %in% params$drop_species]
+                if(length(toDrop) > 0) {
+                    sp <- paste0('"', toDrop, '"')
+                    sp <- paste0(sp, collapse=',')
+                    msg <- paste0('Detections for ', sp, ' were removed before Makara upload.')
+                    result$analysis_comments[i] <- combineComment(result$analysis_comments[i], msg)
+                    result$analysis_sound_source_codes[i] <- paste0(splitSpec[!splitSpec %in% toDrop], collapse=',')
+                }
+            }
             result$analysis_code <- constants$analysis_code
         }
         result
@@ -173,11 +223,18 @@ list(
         if(!dir.exists(detection_folder)) {
             dir.create(detection_folder)
         }
-        dl_status <- select(rt_tracking, deployment_code) %>% 
+        dl_status <- select(rt_tracking, 
+                            deployment_code,
+                            have_detection_data,
+                            platform_status,
+                            # skip_analysis,
+                            analysis_dataset_url) %>% 
+            # filter(!skip_analysis) %>% 
+            distinct() %>% 
             mutate(
                 file = paste0(deployment_code, '_detectiondata.csv'),
                 file = file.path(detection_folder, file),
-                url = gsub('\\.s?html', '', rt_tracking$analysis_dataset_url),
+                url = gsub('\\.s?html', '', analysis_dataset_url),
                 url = paste0(url, '_html/ptracks/manual_analysis.csv'),
                 downloaded = file.exists(file)
             )
@@ -187,7 +244,7 @@ list(
         if(isTRUE(params$update_active_deployment)) {
             redownload <- unique(c(
                 redownload,
-                rt_tracking$deployment_code[rt_tracking$platform_status == 'Active']
+                dl_status$deployment_code[dl_status$platform_status == 'Active']
             ))
         }
         if(!is.null(redownload) &&
@@ -196,15 +253,12 @@ list(
                 dl_status$deployment_code %in% redownload
             ] <- FALSE
         }
-        skipDownload <- rt_tracking$deployment_code[
-            rt_tracking$have_detection_data %in% 
-                c('No (no manual analyses)', 'No (no real-time)')
-        ]
+
         dl_status$skip <- FALSE
         dl_status$skip[
-            dl_status$deployment_code %in% skipDownload
+            dl_status$have_detection_data %in%  c('No (no manual analyses)', 'No (no real-time)')
         ] <- TRUE
-        # dl_status
+        
         badDl <- rep(FALSE, nrow(dl_status))
         for(i in 1:nrow(dl_status)) {
             if(isTRUE(dl_status$downloaded[i]) |
@@ -235,39 +289,47 @@ list(
         }
         dl_status
     }, cue = tar_cue('always')),
-    tar_target(detection_files, {
-        files <- list.files(detection_folder, full.names=TRUE)
-        downloaded <- filter(detection_downloads, downloaded == TRUE)
-        localNotDownload <- !files %in% downloaded$file
-        if(any(localNotDownload) &&
-           FALSE) {
-            warning(sum(localNotDownload),
-                    ' files in detection_folder are not present',
-                    ' in Smartsheet metadata (',
-                    printN(basename(files[localNotDownload]), Inf),
-                    ')')
-            files <- files[!localNotDownload]
-        }
-        downloadNotLocal <- !downloaded$file %in% files
-        if(any(downloadNotLocal)) {
-            warning(sum(downloadNotLocal), 
-                    ' files do not exist and must be redownloaded (', 
-                    printN(downloaded$deployment_code[downloadNotLocal], Inf),
-                    ')')
-        }
-        files
-    }, 
-    cue=tar_cue('always'), format='file'
-    ),
+    # tar_target(detection_files, {
+    #     files <- list.files(detection_folder, full.names=TRUE)
+    #     downloaded <- filter(detection_downloads, downloaded == TRUE)
+    #     localNotDownload <- !files %in% downloaded$file
+    #     if(any(localNotDownload) &&
+    #        FALSE) {
+    #         warning(sum(localNotDownload),
+    #                 ' files in detection_folder are not present',
+    #                 ' in Smartsheet metadata (',
+    #                 printN(basename(files[localNotDownload]), Inf),
+    #                 ')')
+    #         files <- files[!localNotDownload]
+    #     }
+    #     downloadNotLocal <- !downloaded$file %in% files
+    #     if(any(downloadNotLocal)) {
+    #         warning(sum(downloadNotLocal), 
+    #                 ' files do not exist and must be redownloaded (', 
+    #                 printN(downloaded$deployment_code[downloadNotLocal], Inf),
+    #                 ')')
+    #     }
+    #     files
+    # }, 
+    # cue=tar_cue('always'), format='file'
+    # ),
     tar_target(detections_raw, {
-        lapply(detection_files, function(x) {
+        downloaded <- filter(detection_downloads, downloaded == TRUE)
+        files <- downloaded$file
+        fileDNE <- !file.exists(files)
+        if(any(fileDNE)) {
+            warning(sum(fileDNE), ' files do not exist and must be redownloaded (',
+                    printN(downloaded$deployment_code[fileDNE], Inf),
+                    ')')
+            files <- files[!fileDNE]
+        }
+        lapply(files, function(x) {
             result <- read.csv(x)
             result$file <- basename(x)
             result
         })
     }),
     tar_target(detections_combined, {
-        # files <- list.files(detection_folder, full.names=TRUE)
         data <- lapply(detections_raw, baseDetectionLoader)
         data <- sameNameCombiner(data)
         if(length(data) > 1) {
@@ -277,6 +339,12 @@ list(
     }),
     tar_target(detections, {
         result <- formatDetectionData(detections_combined)
+        if(!is.null(params$drop_species) &&
+           length(params$drop_species) > 0) {
+            result <- filter(result, !detection_sound_source_code %in% params$drop_species)
+        }
+        skipDeps <- rt_tracking$deployment_code[rt_tracking$skip_analysis]
+        result <- filter(result, !deployment_code %in% skipDeps)
         noMatchingAna <- !result$deployment_code %in% analyses$deployment_code
         if(any(noMatchingAna)) {
             deps <- unique(result$deployment_code[noMatchingAna])
@@ -287,9 +355,9 @@ list(
         result <- left_join(
             result,
             distinct(select(analyses, 
-                   deployment_organization_code, 
-                   deployment_code,
-                   analysis_organization_code
+                            deployment_organization_code, 
+                            deployment_code,
+                            analysis_organization_code
             )),
             by='deployment_code'
         )
@@ -402,6 +470,7 @@ list(
         result$analyses$analysis_processing_code <- constants$analysis_processing_code
         result$analyses$detector_codes <- constants$detector_codes
         result$analyses$analysis_granularity_code <- constants$analysis_granularity_code
+        result$analyses$analysis_json <- constants$analysis_json
         # result$analyses$analysis_sample_rate_khz <- constants$analysis_sample_rate_khz
         result$analyses$analysis_quality_code <- constants$analysis_quality_code
         result$analyses$analysis_protocol_reference <- constants$analysis_protocol_reference
@@ -440,7 +509,7 @@ list(
         )
         validate_submission(output, 
                             tables=c('deployments', 
-                                     # 'detections',
+                                     'detections',
                                      'analyses', 
                                      'recordings'),
                             reference_tables = refs,
@@ -451,32 +520,10 @@ list(
 
 # TODO ####
 
-## okay for just DMON2_RECORDING recording_code? any poss of multiple recs per deploy?
-
-# NA recording timezones
-
 # do we want to create tracks for gliders? idk which these are
 ## yes - from gcloud storage
 
-# ana WHOI_GSC_201604_SL206 (SS#244) missing ana org_code
-
 # lol theres a metadata makara flag. does this mean ana and det in too?
-
-# double check that ana sound source codes match species i mapped indets
-
-# any analysis json like mahalanobis distance or whatever
-
-# DFO org and call types for 2 marked as "TEMP"
-# rec tz for OSU_AK_202507_UNIT595
-
-# add logic for checking for multiple recordings / duped deployment
-
-# WHOI_CA_202404_CASB OTHE_ANALYSIS is not on server, but baleen ones are
-# do we want to skip uplaoding OTHE?
-
-# noticed that there are some DAILY_ANALYSIS for these deployments. 
-# e.g. WHOI_NJ_202408_NJATL only has BLWH_DAILY already up, 4 more
-# species will be added in this batch
 
 ## MULTI REC ####
 # Not done yet. Analysis needs to refer to recording code(s).

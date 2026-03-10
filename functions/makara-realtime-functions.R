@@ -132,7 +132,7 @@ formatDetectionData <- function(x) {
     )
     callMap <- list(
         'FIWH' = 'FIWH_20HZ',
-        'BLWH' = 'BLWH_SONG',
+        'BLWH' = 'BLWH_MIX',
         'RIWH' = 'RW_UPCALL',
         'HUWH' = 'HUWH_MIX',
         'SEWH' = 'SEWH_DS80HZ', # END FROM bott mount
@@ -141,9 +141,10 @@ formatDetectionData <- function(x) {
         'BESE' = 'BESE_MIX',
         'BOWH' = 'BOWH_MIX',
         'WALR' = 'WALR_MIX',
-        'RV-G' = 'TEMP',
-        'OTHE' = 'TEMP',
-        'BRWH' = 'BRWH_MIX'
+        # 'RV-G' = 'TEMP',
+        # 'OTHE' = 'TEMP',
+        'BRWH' = 'BRWH_MIX',
+        'ATCO' = 'COD_GRUNT'
     )
     resultMap <- list(
         'absent' = 'NOT_DETECTED',
