@@ -1,5 +1,5 @@
 # Generic Makara Functions ----
-# Packages: dplyr, tidyr, lubridate, makaraValidatr
+# Packages: dplyr, tidyr, lubridate, makaraValidatr, bigrquery
 
 ## Updating code ----
 # uncomment this chunk to force janky single-file update of my common functions
@@ -453,13 +453,18 @@ checkAlreadyDb <- function(x, db) {
         'recordings_intervals' = c('deployment_code', 'recording_code', 'recording_interval_start_datetime'),
         'analyses' = c('deployment_organization_code', 'deployment_code', 'analysis_code')
     )
+    # tables to not check against
+    noCheck <- c('detections', 'sensor_values')
     for(j in names(x)) {
-        if(!j %in% names(db)) {
-            warning('Could not check table ', j, ', was not in DB')
+        if(j %in% noCheck) {
             next
         }
         if(!j %in% names(joinRequirements)) {
             warning('No requirements listed for table ', j, ', did not check')
+            next
+        }
+        if(!j %in% names(db)) {
+            warning('Could not check table ', j, ', was not in DB')
             next
         }
         if(j == 'recording_intervals') {

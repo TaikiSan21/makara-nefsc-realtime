@@ -47,31 +47,33 @@ list(
     # params and constants ----
     tar_target(params, {
         list(
-            new_org = list(code='DFO', name='JUST FOR CHECKS'),
+            # new_org = list(code='DFO', name='JUST FOR CHECKS'),
             # new_call = list(code='TEMP', name='JUST FOR CHECKS'),
             # any deployment codes to force detection redownload
             force_download = NULL, 
             # flag to always redownload detections for active deployments
-            update_active_deployment = FALSE,
+            # update_active_deployment = FALSE,
+            download_active_detections = FALSE,
             # flag to skip all work for active deployments
-            skip_active_deployment = TRUE,
+            skip_active_deployment = FALSE,
             # flag to skip data already in Makara (unless needs update)
             skip_already_makara = FALSE,
             # split into 1 ana per species vs 1 ana all species
             split_analyses = FALSE,
             # skip uploading UAF_AK and OSU_AK ana/dets, metadata only
             skip_AK_analysis = TRUE,
+            # fill rec start/end with analysis time for handful of deployments only
+            fill_recording_times = TRUE,
             # drop_species = c()
             drop_species = c('RV-G', 'OTHE')
         )
     }),
     tar_target(constants, {
         list(
-            # recording_code = 'DMON2_RECORDING'
+            dynamic_management_platform = TRUE,
             analysis_processing_code = 'REAL_TIME',
             detector_codes = 'LFDCS',
             analysis_granularity_code = 'INTERVAL',
-            # analysis_sample_rate_khz = 1,
             analysis_quality_code = 'FULLY_VALIDATED',
             analysis_code = 'REAL_TIME_ANALYSIS',
             analysis_json = as.character(toJSON(
@@ -83,7 +85,9 @@ list(
     }),
     tar_target(templates, {
         # now uses makaraValidatr
-        formatBasicTemplates()
+        result <- formatBasicTemplates()
+        result$deployments$dynamic_management_platform <- logical(0) # temp fix for this
+        result
     }),
     # secrets has DB passwords, smartsheets key and IDs
     tar_target(secrets_file, '.secrets/secrets.yml'),
@@ -134,7 +138,7 @@ list(
             result$skip_analysis <- result$skip_analysis | AKdeps
         }
         # coalesce recording times
-        if(isTRUE(TRUE)) {
+        if(isTRUE(params$fill_recording_times)) {
             depsToFill <- c('OSU_AK_202307_UNIT595',
                             'WHOI_SBNMS_201602_WE03',
                             'WHOI_SBNMS_201512_WE10',
@@ -167,8 +171,8 @@ list(
             rename(
                 deployment_organization_code = organization_code
             ) %>% 
-            mutate(analysis_release_pacm = pacm_permissions != 'Requested/Approval pending',
-                   analysis_release_data = analysis_release_pacm) %>% 
+            mutate(analysis_release_pacm = analysis_release_pacm == 'TRUE',
+                   analysis_release_data = analysis_release_data == 'TRUE') %>%
             # filter(!have_detection_data %in% c('No (no manual analyses)', 'No (no real-time)')) %>% 
             left_join(
                 select(recordings, 
@@ -181,8 +185,8 @@ list(
             result$analysis_sample_rate_khz <- NA
         }
         result$analysis_sample_rate_khz <- coalesce(
-            result$analysis_sample_rate_khz,
-            result$recording_sample_rate_khz / 2
+            as.numeric(result$analysis_sample_rate_khz),
+            as.numeric(result$recording_sample_rate_khz) / 2
         )
         ## split ana by analysis_sound_source_codes here ----
         result$analysis_sound_source_codes <- gsub(' ', '', result$analysis_sound_source_codes)
@@ -238,26 +242,34 @@ list(
                 url = paste0(url, '_html/ptracks/manual_analysis.csv'),
                 downloaded = file.exists(file)
             )
+        # dont try to download for no detection or active deployments
+        dl_status$skip <- FALSE
+        dl_status$skip[
+            dl_status$have_detection_data %in%  c('No (no manual analyses)', 'No (no real-time)')
+        ] <- TRUE
+        #  i think we should skip active detection downloads by default
+        dl_status$skip[
+            dl_status$platform_status == 'Active'
+        ] <- TRUE
         # redownload manually labeled and currently active - comment out during dev
         # may want to adjust this to try and do an every 24h thing
         redownload <- params$force_download
-        if(isTRUE(params$update_active_deployment)) {
+        if(isTRUE(params$download_active_detections)) {
             redownload <- unique(c(
                 redownload,
                 dl_status$deployment_code[dl_status$platform_status == 'Active']
             ))
         }
+        # overrides skip if its in force
         if(!is.null(redownload) &&
            length(redownload) > 0) {
             dl_status$downloaded[
                 dl_status$deployment_code %in% redownload
             ] <- FALSE
+            dl_status$skip[
+                dl_status$deployment_code %in% redownload
+            ] <- FALSE
         }
-
-        dl_status$skip <- FALSE
-        dl_status$skip[
-            dl_status$have_detection_data %in%  c('No (no manual analyses)', 'No (no real-time)')
-        ] <- TRUE
         
         badDl <- rep(FALSE, nrow(dl_status))
         for(i in 1:nrow(dl_status)) {
@@ -289,30 +301,6 @@ list(
         }
         dl_status
     }, cue = tar_cue('always')),
-    # tar_target(detection_files, {
-    #     files <- list.files(detection_folder, full.names=TRUE)
-    #     downloaded <- filter(detection_downloads, downloaded == TRUE)
-    #     localNotDownload <- !files %in% downloaded$file
-    #     if(any(localNotDownload) &&
-    #        FALSE) {
-    #         warning(sum(localNotDownload),
-    #                 ' files in detection_folder are not present',
-    #                 ' in Smartsheet metadata (',
-    #                 printN(basename(files[localNotDownload]), Inf),
-    #                 ')')
-    #         files <- files[!localNotDownload]
-    #     }
-    #     downloadNotLocal <- !downloaded$file %in% files
-    #     if(any(downloadNotLocal)) {
-    #         warning(sum(downloadNotLocal), 
-    #                 ' files do not exist and must be redownloaded (', 
-    #                 printN(downloaded$deployment_code[downloadNotLocal], Inf),
-    #                 ')')
-    #     }
-    #     files
-    # }, 
-    # cue=tar_cue('always'), format='file'
-    # ),
     tar_target(detections_raw, {
         downloaded <- filter(detection_downloads, downloaded == TRUE)
         files <- downloaded$file
@@ -323,11 +311,19 @@ list(
                     ')')
             files <- files[!fileDNE]
         }
-        lapply(files, function(x) {
+        result <- lapply(files, function(x) {
             result <- read.csv(x)
             result$file <- basename(x)
             result
         })
+        # remove active detection files so that they get redownloaded later
+        active_files <- downloaded$file[downloaded$platform_status == 'Active']
+        for(f in active_files) {
+            if(file.exists(f)) {
+                unlink(f)
+            }
+        }
+        result
     }),
     tar_target(detections_combined, {
         data <- lapply(detections_raw, baseDetectionLoader)
@@ -387,7 +383,7 @@ list(
             rt_tracking,
             any_of(c(names, extraCols))
         )
-        result$dynamic_management_platform <- TRUE
+        # result$dynamic_management_platform <- TRUE
         numCols <- c('deployment_latitude', 
                      'deployment_longitude',
                      'deployment_water_depth_m')
@@ -397,6 +393,7 @@ list(
         if(!'deployment_comments' %in% names(result)) {
             result$deployment_comments <- NA
         }
+        result$deployment_device_codes <- gsub(' ', '', result$deployment_device_codes)
         result <- fillNAFromOther(result,
                                   to_columns=c('deployment_longitude',
                                                'deployment_latitude'),
@@ -416,6 +413,7 @@ list(
             warning(length(multiDeps), ' deployments have multiple entries in Smartsheets (',
                     printN(multiDeps, Inf), ')')
         }
+        # result$project_code <- formatProjectCodes(result$deployment_code)
         result
     }),
     # recordings ----
@@ -466,15 +464,15 @@ list(
         result$analyses <- analyses
         result$detections <- detections
         
-        # constants
-        result$analyses$analysis_processing_code <- constants$analysis_processing_code
-        result$analyses$detector_codes <- constants$detector_codes
-        result$analyses$analysis_granularity_code <- constants$analysis_granularity_code
+        ## constants ----
+        # result$analyses$analysis_processing_code <- constants$analysis_processing_code
+        # result$analyses$detector_codes <- constants$detector_codes
+        # result$analyses$analysis_granularity_code <- constants$analysis_granularity_code
         result$analyses$analysis_json <- constants$analysis_json
-        # result$analyses$analysis_sample_rate_khz <- constants$analysis_sample_rate_khz
-        result$analyses$analysis_quality_code <- constants$analysis_quality_code
-        result$analyses$analysis_protocol_reference <- constants$analysis_protocol_reference
-        # result$analyses$analysis_code <- constants$analysis_code
+        # result$analyses$analysis_quality_code <- constants$analysis_quality_code
+        # result$analyses$analysis_protocol_reference <- constants$analysis_protocol_reference
+        
+        result$deployments$dynamic_management_platform <- constants$dynamic_management_platform
         
         result
     }),
@@ -486,7 +484,7 @@ list(
                                 templates=templates,
                                 ncei=FALSE,
                                 dropEmpty = TRUE)
-        # out <- checkDbValues(out, db)
+        out <- checkDbValues(out, db)
         checkWarnings(out)
         out
     }),
@@ -509,7 +507,7 @@ list(
         )
         validate_submission(output, 
                             tables=c('deployments', 
-                                     'detections',
+                                     # 'detections',
                                      'analyses', 
                                      'recordings'),
                             reference_tables = refs,
@@ -529,3 +527,15 @@ list(
 # Not done yet. Analysis needs to refer to recording code(s).
 # which would this be?
 # Just warn for now
+
+# how to handle data download for active -> not transition
+# currently can tell it to always re-download active data,
+# may need to have a force download all option? otherwise
+# not clear when last active download was
+
+# current strat is to remove the detection file from active
+# so that it always redownloads when we want it. double check
+# that this works as intended when turning on/off the flag
+
+# reorg params into things JW might actually change vs things
+# i just set as options for development

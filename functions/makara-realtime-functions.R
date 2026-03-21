@@ -29,6 +29,13 @@ readSmartSecrets <- function(x) {
     text
 }
 
+# make proj code from dep code
+formatProjectCodes <- function(x) {
+    org <- gsub('^([A-Z-]*)_.*', '\\1', x)
+    proj <- gsub('^([A-Z-]*_[A-Z-]*)_.*','\\1', x)
+    proj
+}
+
 smartToDf <- function(x) {
     data <- fromJSON(rawToChar(x$content))
     cols <- sapply(data$columns, function(x) x$title)
@@ -132,7 +139,7 @@ formatDetectionData <- function(x) {
     )
     callMap <- list(
         'FIWH' = 'FIWH_20HZ',
-        'BLWH' = 'BLWH_MIX',
+        'BLWH' = 'BLWH_SONG',
         'RIWH' = 'RW_UPCALL',
         'HUWH' = 'HUWH_MIX',
         'SEWH' = 'SEWH_DS80HZ', # END FROM bott mount
