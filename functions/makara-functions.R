@@ -450,11 +450,12 @@ checkAlreadyDb <- function(x, db) {
     joinRequirements <- list(
         'deployments' = c('organization_code', 'deployment_code'),
         'recordings' = c('organization_code', 'deployment_code', 'recording_code'),
-        'recordings_intervals' = c('deployment_code', 'recording_code', 'recording_interval_start_datetime'),
-        'analyses' = c('deployment_organization_code', 'deployment_code', 'analysis_code')
+        'recording_intervals' = c('deployment_code', 'recording_code', 'recording_interval_start_datetime'),
+        'analyses' = c('deployment_organization_code', 'deployment_code', 'analysis_code'),
+        'tracks' = c('organization_code', 'deployment_code', 'track_code')
     )
     # tables to not check against
-    noCheck <- c('detections', 'sensor_values')
+    noCheck <- c('detections', 'sensor_values', 'track_positions')
     for(j in names(x)) {
         if(j %in% noCheck) {
             next
@@ -479,8 +480,56 @@ checkAlreadyDb <- function(x, db) {
     x
 }
 
+checkDetectionData <- function(x) {
+    # only if dets and ana are in
+    if(!all(c('detections', 'analyses') %in% names(x))) {
+        return(x)
+    }
+    # want to check det codes are in ana
+    dets <- distinct(select(x$detections,
+                            deployment_code,
+                            analysis_code,
+                            detection_sound_source_code))
+    ana <- distinct(select(x$analyses,
+                           deployment_code, 
+                           analysis_code,
+                           analysis_sound_source_codes))
+    warns <- vector('list', length=0)
+    anaCheck <- doJoinCheck(dets, ana, by=c('deployment_code', 'analysis_code'), verbose=F)
+    if(any(anaCheck$new)) {
+        warns <- addWarning(warns, 
+                            deployment=anaCheck$deployment_code[anaCheck$new],
+                            type='analysis_code not present in analyses',
+                            table='detections',
+                            message=paste0("analysis code '", anaCheck$analysis_code[anaCheck$new],
+                                           "' does not match analyses table")
+        )
+    }
+    # want to check species in detections are in their analysis
+    ana <- ana  %>% 
+        mutate(detection_sound_source_code = strsplit(analysis_sound_source_codes, ',')) %>% 
+        unnest(detection_sound_source_code)
+    speciesCheck <- doJoinCheck(dets, ana, by=c('deployment_code', 'analysis_code', 'detection_sound_source_code'), verbose=F)
+    if(any(speciesCheck$new)) {
+        warns <- addWarning(warns, 
+                            deployment=speciesCheck$deployment_code[speciesCheck$new],
+                            type='detection_sound_source_code not present in analysis_sound_source_codes',
+                            table='detections',
+                            message=paste0("detection_sound_source_code '",
+                                           speciesCheck$detection_sound_source_code[speciesCheck$new],
+                                           "' is not present in analysis_sound_source_codes")
+        )
+    }
+    if(!'warnings' %in% names(x)) {
+        x$warnings <- warns
+    } else {
+        x$warnings <- bind_rows(x$warnings, warns)
+    }
+    x
+}
+
 # check if x is already in y by joining
-doJoinCheck <- function(x, y, by, name) {
+doJoinCheck <- function(x, y, by, name, verbose=TRUE) {
     # x <- select(x, all_of(by))
     y <- distinct(select(y, all_of(by)))
     y$JOINCHECK <- TRUE
@@ -492,7 +541,9 @@ doJoinCheck <- function(x, y, by, name) {
     newX <- is.na(x$JOINCHECK)
     x$JOINCHECK <- NULL
     x$new <- newX
-    message(sum(newX), ' out of ', nrow(x), ' ', name, ' are new (not yet in Makara)')
+    if(isTRUE(verbose)) {
+        message(sum(newX), ' out of ', nrow(x), ' ', name, ' are new (not yet in Makara)')
+    }
     x
 }
 
@@ -590,9 +641,23 @@ downloadBqMakara <- function(project='ggn-nmfs-pacm-dev-1', dataset='makara') {
                             recordings r
                             on d.id = r.deployment_id')
     dep_rec_df <- bq_table_download(dep_rec_q)
+    recint_q <- bq_dataset_query(ds, query = "select 
+                             ri.recording_interval_start_datetime,
+                             ri.recording_interval_end_datetime,
+                             r.recording_code,
+                             d.deployment_code
+                             from recording_intervals ri 
+                             left join 
+                             recordings r 
+                             on ri.recording_id = r.id
+                             left join
+                             deployments d
+                             on  r.deployment_id = d.id")
+    recint_df <- bq_table_download(recint_q)
     list(db_ref=df_ref,
          db_org=df_org,
-         db_dep_rec=dep_rec_df)
+         db_dep_rec=dep_rec_df,
+         db_rec_int=recint_df)
 }
 
 # transform into list of db$table_name
@@ -637,5 +702,6 @@ formatBqMakara <- function(db_raw) {
         by=c('organization_code', 'deployment_code'),
         relationship='one-to-one'
     )
+    result$recording_intervals <- db_raw$db_rec_int
     result
 }

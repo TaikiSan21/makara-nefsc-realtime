@@ -47,13 +47,11 @@ list(
     # params and constants ----
     tar_target(params, {
         list(
-            # new_org = list(code='DFO', name='JUST FOR CHECKS'),
-            # new_call = list(code='TEMP', name='JUST FOR CHECKS'),
+            new_org = list(code='DFO', name='TEMP PASS CHECK'),
             # any deployment codes to force detection redownload
             force_download = NULL, 
-            # flag to always redownload detections for active deployments
-            # update_active_deployment = FALSE,
-            download_active_detections = FALSE,
+            # default is to not download active detections, set this TRUE to download
+            download_active_detections = TRUE,
             # flag to skip all work for active deployments
             skip_active_deployment = FALSE,
             # flag to skip data already in Makara (unless needs update)
@@ -65,22 +63,26 @@ list(
             # fill rec start/end with analysis time for handful of deployments only
             fill_recording_times = TRUE,
             # drop_species = c()
-            drop_species = c('RV-G', 'OTHE')
+            drop_species = c('RV-G', 'OTHE'),
+            # logical flag to not write detection CSV - ignore just for testing
+            skip_writing_detections = FALSE
         )
     }),
     tar_target(constants, {
         list(
             dynamic_management_platform = TRUE,
-            analysis_processing_code = 'REAL_TIME',
-            detector_codes = 'LFDCS',
-            analysis_granularity_code = 'INTERVAL',
-            analysis_quality_code = 'FULLY_VALIDATED',
-            analysis_code = 'REAL_TIME_ANALYSIS',
+            # analysis_processing_code = 'REAL_TIME',
+            # detector_codes = 'LFDCS',
+            # analysis_granularity_code = 'INTERVAL',
+            # analysis_quality_code = 'FULLY_VALIDATED',
+            # analysis_code = 'REAL_TIME_ANALYSIS',
+            # analysis_protocol_reference = 'Baumgartner & Mussoline 2011 (doi:10.1121/1.3562166); Wilder et al. 2026 (LFDCS 2.0 Reference Guide)',
             analysis_json = as.character(toJSON(
                 list(MAX_MAHALANOBIS_DISTANCE = 3.0,
                      CALL_LIBRARY = 'clnb_gom7')
             )),
-            analysis_protocol_reference = 'Baumgartner & Mussoline 2011 (doi:10.1121/1.3562166); Wilder et al. 2026 (LFDCS 2.0 Reference Guide)'
+            track_code = 'GLIDER_TRACK',
+            track_comments = 'Track generated from detection sheet coordinates'
         )
     }),
     tar_target(templates, {
@@ -127,15 +129,23 @@ list(
         if(isTRUE(params$skip_already_makara)) {
             result <- filter(
                 result,
-                metadata_in_makara %in% c('No', 
-                                          'Yes (update in database once retrieved)',
-                                          'Yes (needs updating)')
+                # metadata_in_makara %in% c('No', 
+                #                           'Yes (update in database once retrieved)',
+                #                           'No (only need recording metadata, not analyses)',
+                #                           'Yes (needs updating)')
+                !metadata_in_makara %in% c('Yes', 
+                                           'N/A',
+                                          'Yes (recording metadata only, no analyses)')
             )
         }
         result$skip_analysis <- result$have_detection_data %in% c('No (no manual analyses)', 'No (no real-time)')
         if(isTRUE(params$skip_AK_analysis)) {
             AKdeps <- grepl('^OSU_AK|^UAF_AK', result$deployment_code)
             result$skip_analysis <- result$skip_analysis | AKdeps
+        }
+        if(isFALSE(params$download_active_detections)) {
+            activeDeps <- result$platform_status == 'Active'
+            result$skip_analysis <- result$skip_analysis | activeDeps
         }
         # coalesce recording times
         if(isTRUE(params$fill_recording_times)) {
@@ -217,7 +227,7 @@ list(
                     result$analysis_sound_source_codes[i] <- paste0(splitSpec[!splitSpec %in% toDrop], collapse=',')
                 }
             }
-            result$analysis_code <- constants$analysis_code
+            # result$analysis_code <- constants$analysis_code
         }
         result
     }),
@@ -226,6 +236,9 @@ list(
     tar_target(detection_downloads, {
         if(!dir.exists(detection_folder)) {
             dir.create(detection_folder)
+        }
+        if(!dir.exists(file.path(detection_folder, 'active'))) {
+            dir.create(file.path(detection_folder, 'active'))
         }
         dl_status <- select(rt_tracking, 
                             deployment_code,
@@ -237,11 +250,23 @@ list(
             distinct() %>% 
             mutate(
                 file = paste0(deployment_code, '_detectiondata.csv'),
-                file = file.path(detection_folder, file),
+                file = case_when(
+                    platform_status == 'Active' ~ file.path(detection_folder, 'active', file),
+                    platform_status != 'Active' ~file.path(detection_folder, file)
+                ),
                 url = gsub('\\.s?html', '', analysis_dataset_url),
-                url = paste0(url, '_html/ptracks/manual_analysis.csv'),
-                downloaded = file.exists(file)
+                url = paste0(url, '_html/ptracks/manual_analysis.csv')
             )
+        # remove active detection files so that they get redownloaded later
+        # these should only get processed in instances where we just downloaded
+        # them to prevent errors when a dep switches from active
+        # active_files <- dl_status$file[dl_status$platform_status == 'Active']
+        # for(f in active_files) {
+        #     if(file.exists(f)) {
+        #         unlink(f)
+        #     }
+        # }
+        dl_status$downloaded <- file.exists(dl_status$file)
         # dont try to download for no detection or active deployments
         dl_status$skip <- FALSE
         dl_status$skip[
@@ -317,12 +342,12 @@ list(
             result
         })
         # remove active detection files so that they get redownloaded later
-        active_files <- downloaded$file[downloaded$platform_status == 'Active']
-        for(f in active_files) {
-            if(file.exists(f)) {
-                unlink(f)
-            }
-        }
+        # active_files <- downloaded$file[downloaded$platform_status == 'Active']
+        # for(f in active_files) {
+        #     if(file.exists(f)) {
+        #         unlink(f)
+        #     }
+        # }
         result
     }),
     tar_target(detections_combined, {
@@ -361,7 +386,12 @@ list(
             result$analysis_code <- paste0(result$detection_sound_source_code, '_ANALYSIS')
         }
         if(isFALSE(params$split_analyses)) {
-            result$analysis_code <- constants$analysis_code
+            result <- left_join(
+                result,
+                distinct(select(analyses, deployment_code, analysis_code)),
+                by='deployment_code'
+            )
+            # result$analysis_code <- constants$analysis_code
         }
         names <- names(templates$detections)
         result <- select(
@@ -377,7 +407,7 @@ list(
     # deployments ----
     tar_target(deployments, {
         names <- names(templates$deployments)
-        extraCols <- c('metadata_in_makara?',
+        extraCols <- c('metadata_in_makara',
                        'platform_status')
         result <- select(
             rt_tracking,
@@ -416,10 +446,51 @@ list(
         # result$project_code <- formatProjectCodes(result$deployment_code)
         result
     }),
+    # tracks ----
+    tar_target(tracks, {
+        # only make tracks if we have analysis
+        # and for eletric_glider/wave_glider
+        result <- select(
+            analyses,
+            organization_code=deployment_organization_code,
+            deployment_code
+        ) %>% 
+            distinct() %>% 
+            
+            left_join(
+                select(
+                    deployments,
+                    deployment_code,
+                    deployment_platform_type_code
+                ),
+                by='deployment_code',
+                relationship='one-to-one'
+            ) %>% 
+            filter(deployment_platform_type_code %in% c('ELECTRIC_GLIDER', 'WAVE_GLIDER'))
+        result
+    }),
+    tar_target(track_positions, {
+        result <- select(
+            detections,
+            track_position_longitude = detection_longitude,
+            track_position_latitude = detection_latitude,
+            track_position_datetime = detection_start_datetime,
+            deployment_code) %>% 
+            filter(deployment_code %in% tracks$deployment_code,
+                   !is.na(track_position_latitude),
+                   !is.na(track_position_longitude)) %>% 
+            distinct()
+        result <- result %>% 
+            left_join(
+                select(tracks, deployment_code, organization_code),
+                by='deployment_code'
+                )
+        result
+    }),
     # recordings ----
     tar_target(recordings, {
         names <- names(templates$recordings)
-        extraCols <- c('metadata_in_makara?',
+        extraCols <- c('metadata_in_makara',
                        'platform_status')
         result <- select(
             rt_tracking,
@@ -455,6 +526,9 @@ list(
                                   comment = c("Recording start/end datetimes are taken from the start/end datetimes from the first and last periods on the real-time detection sheets because we don't currently have the raw audio for this deployment", NA),
                                   verbose=TRUE
         )
+        if(any(result$platform_status == 'Active')) {
+            result$recording_comments[result$platform_status == 'Active'] <- 'Recording end time taken from detection sheet while deployment was active, time is inaccurate for final metadata'
+        }
         result
     }),
     # combine and check ----
@@ -463,6 +537,8 @@ list(
         result$recordings <- recordings
         result$analyses <- analyses
         result$detections <- detections
+        result$tracks <- tracks
+        result$track_positions <- track_positions
         
         ## constants ----
         # result$analyses$analysis_processing_code <- constants$analysis_processing_code
@@ -473,6 +549,11 @@ list(
         # result$analyses$analysis_protocol_reference <- constants$analysis_protocol_reference
         
         result$deployments$dynamic_management_platform <- constants$dynamic_management_platform
+        
+        result$tracks$track_code <- constants$track_code
+        result$tracks$track_comments <- constants$track_comments
+        
+        result$track_positions$track_code <- constants$track_code
         
         result
     }),
@@ -485,13 +566,18 @@ list(
                                 ncei=FALSE,
                                 dropEmpty = TRUE)
         out <- checkDbValues(out, db)
+        out <- checkDetectionData(out)
         checkWarnings(out)
         out
     }),
     # create output ----
     tar_target(output_dir, 'outputs'),
     tar_target(output, {
-        writeTemplateOutput(db_check, folder=output_dir)
+        to_write <- db_check
+        if(isTRUE(params$skip_writing_detections)) {
+            to_write$detections <- NULL
+        }
+        writeTemplateOutput(to_write, folder=output_dir)
         output_dir
     }, format='file'),
     tar_target(validatr, {
@@ -509,7 +595,10 @@ list(
                             tables=c('deployments', 
                                      # 'detections',
                                      'analyses', 
-                                     'recordings'),
+                                     'recordings',
+                                     'track_positions',
+                                     'tracks'
+                                     ),
                             reference_tables = refs,
                             output_file = file.path(output_dir, 'validation_results.csv'),
                             verbose=FALSE)
@@ -519,23 +608,21 @@ list(
 # TODO ####
 
 # do we want to create tracks for gliders? idk which these are
-## yes - from gcloud storage
-
-# lol theres a metadata makara flag. does this mean ana and det in too?
+## probably not, but they are on gcloud storage
 
 ## MULTI REC ####
 # Not done yet. Analysis needs to refer to recording code(s).
 # which would this be?
 # Just warn for now
 
-# how to handle data download for active -> not transition
-# currently can tell it to always re-download active data,
-# may need to have a force download all option? otherwise
-# not clear when last active download was
+# may want to bump timeout >60 it triggered a couple times. At least mention
+# in any tutorial doc
 
-# current strat is to remove the detection file from active
-# so that it always redownloads when we want it. double check
-# that this works as intended when turning on/off the flag
+# current strat for actives is to put them in a separate detections/active folder
+# then when it changes to not active it will no longer look for file in that path,
+# so should be forced to download new one and not use older active 
 
 # reorg params into things JW might actually change vs things
 # i just set as options for development
+
+# make trackos from det sheets easy mode
