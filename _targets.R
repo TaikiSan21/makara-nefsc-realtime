@@ -47,6 +47,9 @@ list(
     # params and constants ----
     tar_target(params, {
         list(
+            # Allow replacing non-NA databse values with NA - almost always FALSE
+            replace_db_with_na = FALSE,
+            # only used to avoid validatr warnings
             new_org = list(code='DFO', name='TEMP PASS CHECK'),
             # any deployment codes to force detection redownload
             force_download = NULL, 
@@ -70,7 +73,7 @@ list(
     }),
     tar_target(constants, {
         list(
-            dynamic_management_platform = TRUE,
+            # dynamic_management_platform = TRUE,
             # analysis_processing_code = 'REAL_TIME',
             # detector_codes = 'LFDCS',
             # analysis_granularity_code = 'INTERVAL',
@@ -413,7 +416,7 @@ list(
             rt_tracking,
             any_of(c(names, extraCols))
         )
-        # result$dynamic_management_platform <- TRUE
+        result$dynamic_management_platform <- as.logical(result$dynamic_management_platform)
         numCols <- c('deployment_latitude', 
                      'deployment_longitude',
                      'deployment_water_depth_m')
@@ -548,7 +551,7 @@ list(
         # result$analyses$analysis_quality_code <- constants$analysis_quality_code
         # result$analyses$analysis_protocol_reference <- constants$analysis_protocol_reference
         
-        result$deployments$dynamic_management_platform <- constants$dynamic_management_platform
+        # result$deployments$dynamic_management_platform <- constants$dynamic_management_platform
         
         result$tracks$track_code <- constants$track_code
         result$tracks$track_comments <- constants$track_comments
@@ -567,6 +570,7 @@ list(
                                 dropEmpty = TRUE)
         out <- checkDbValues(out, db)
         out <- checkDetectionData(out)
+        out <- checkDbReplacements(out, db, replaceWithNA=params$replace_db_with_na)
         checkWarnings(out)
         out
     }),
@@ -607,9 +611,6 @@ list(
 
 # TODO ####
 
-# do we want to create tracks for gliders? idk which these are
-## probably not, but they are on gcloud storage
-
 ## MULTI REC ####
 # Not done yet. Analysis needs to refer to recording code(s).
 # which would this be?
@@ -624,5 +625,3 @@ list(
 
 # reorg params into things JW might actually change vs things
 # i just set as options for development
-
-# make trackos from det sheets easy mode

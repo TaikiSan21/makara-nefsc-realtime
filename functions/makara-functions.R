@@ -250,6 +250,33 @@ checkMakTemplate <- function(x, templates, ncei=FALSE, dropEmpty=FALSE) {
             }
             
         }
+        # Check coordinate column ranges
+        latCols <- grep('latitude', names(thisData), value=TRUE)
+        for(l in latCols) {
+            oob <- !is.na(thisData[[l]]) &
+                (thisData[[l]] > 90 | thisData[[l]] < -90)
+            if(any(oob)) {
+                warns <- addWarning(warns, deployment=thisData$deployment_code[oob],
+                                    type='Latitude Out of Bounds',
+                                    table=n,
+                                    message=paste0("Latitude '", thisData[[l]][oob], "' in column '",
+                                                   l, "' is outside -90 to 90 range")
+                )
+            }
+        }
+        longCols <- grep('longitude', names(thisData), value=TRUE)
+        for(l in longCols) {
+            oob <- !is.na(thisData[[l]]) &
+                (thisData[[l]] > 180 | thisData[[l]] < -180)
+            if(any(oob)) {
+                warns <- addWarning(warns, deployment=thisData$deployment_code[oob],
+                                    type='Longitude Out of Bounds',
+                                    table=n,
+                                    message=paste0("Longitude '", thisData[[l]][oob], "' in column '",
+                                                   l, "' is outside -180 to 180 range")
+                )
+            }
+        }
         # check that values in mandatory columns are not NA or ''
         for(m in thisMand[!missMand]) {
             if(is.character(thisTemp[[m]])) {
@@ -529,9 +556,12 @@ checkDetectionData <- function(x) {
 }
 
 # check if x is already in y by joining
-doJoinCheck <- function(x, y, by, name, verbose=TRUE) {
+doJoinCheck <- function(x, y, by, name=NULL, ix=FALSE, verbose=TRUE) {
     # x <- select(x, all_of(by))
     y <- distinct(select(y, all_of(by)))
+    if(isTRUE(ix)) {
+        y$JOINIX <- 1:nrow(y)
+    }
     y$JOINCHECK <- TRUE
     x <- left_join(
         x,
@@ -542,7 +572,10 @@ doJoinCheck <- function(x, y, by, name, verbose=TRUE) {
     x$JOINCHECK <- NULL
     x$new <- newX
     if(isTRUE(verbose)) {
-        message(sum(newX), ' out of ', nrow(x), ' ', name, ' are new (not yet in Makara)')
+        if(!is.null(name)) {
+            name <- paste0(' ', name)
+        }
+        message(sum(newX), ' out of ', nrow(x), name, ' are new (not yet in Makara)')
     }
     x
 }
@@ -624,40 +657,47 @@ downloadBqMakara <- function(project='ggn-nmfs-pacm-dev-1', dataset='makara') {
     tb_org <- bq_dataset_query(ds, query = "select * from view_organization_codes")
     df_org <- bq_table_download(tb_org)
     
-    dep_rec_q <- bq_dataset_query(ds, query='select
-                            d.organization_code,
-                            d.deployment_code,
-                            d.deployment_datetime,
-                            d.recovery_datetime,
-                            d.deployment_alias,
-                            r.recording_start_datetime,
-                            r.recording_end_datetime,
-                            r.recording_usable_start_datetime,
-                            r.recording_usable_end_datetime,
-                            r.recording_code
-                            from
-                            deployments d
-                            left join
-                            recordings r
-                            on d.id = r.deployment_id')
-    dep_rec_df <- bq_table_download(dep_rec_q)
-    recint_q <- bq_dataset_query(ds, query = "select 
-                             ri.recording_interval_start_datetime,
-                             ri.recording_interval_end_datetime,
-                             r.recording_code,
-                             d.deployment_code
-                             from recording_intervals ri 
-                             left join 
-                             recordings r 
-                             on ri.recording_id = r.id
-                             left join
-                             deployments d
-                             on  r.deployment_id = d.id")
-    recint_df <- bq_table_download(recint_q)
+    full_tables <- c('deployments', 
+                     'recordings', 
+                     'analyses', 
+                     'recording_intervals',
+                     'tracks')
+    full_df <- vector('list', length=length(full_tables))
+    names(full_df) <- full_tables
+    for(i in seq_along(full_df)) {
+        query <- paste0('select * from ', full_tables[i])
+        if(full_tables[i] == 'deployments') {
+            query <- 'select * from 
+            deployments d
+            left join 
+            (select id, project_code from projects) p
+            on p.id = d.project_id
+            left join
+            (select id, site_code from sites) s
+            on s.id = d.site_id
+            '
+        }
+        q <- bq_dataset_query(ds, query=query)
+        d <- bq_table_download(q)
+        full_df[[i]] <- d
+    }
+    # aggregate and add device_codes
+    query <- "select dd.deployment_id, STRING_AGG(dev.device_code, ',') deployment_device_codes from 
+        deployments_devices dd
+        left join devices dev
+        on dev.id = dd.device_id
+        group by dd.deployment_id
+    "
+    devq <- bq_dataset_query(ds, query)
+    devd <- bq_table_download(devq)
+    full_df$deployments <- left_join(
+        full_df$deployments,
+        devd,
+        by=c('id' = 'deployment_id')
+    )
     list(db_ref=df_ref,
          db_org=df_org,
-         db_dep_rec=dep_rec_df,
-         db_rec_int=recint_df)
+         full_data=full_df)
 }
 
 # transform into list of db$table_name
@@ -673,7 +713,6 @@ formatBqMakara <- function(db_raw) {
         keepCol <- which(sapply(x, function(col) !all(is.na(col))))
         x[keepCol]
     })
-    result$recording_intervals <- db_raw$db_rec_int
     refs <- split(db_raw$db_ref, db_raw$db_ref$table)
     refs <- lapply(refs, function(x) {
         if(x$table[1] == 'call_types_sound_sources') {
@@ -695,13 +734,195 @@ formatBqMakara <- function(db_raw) {
     for(table in names(refs)) {
         result[[table]] <- refs[[table]]
     }
-    result$deployments_recordings <- db_raw$db_dep_rec
-    result$deployments <- left_join(
-        result$deployments,
-        distinct(select(result$deployments_recordings, organization_code, deployment_code, deployment_alias)),
-        by=c('organization_code', 'deployment_code'),
+    
+    fulls <- db_raw$full_data
+    
+    fulls$deployments <- left_join(
+        fulls$deployments,
+        select(fulls$deployments, id, parent_deployment_code=deployment_code),
+        by=c('parent_deployment_id'='id'),
+        relationship = 'many-to-one'
+    )
+    for(t in names(fulls)) {
+        if('deployment_id' %in% names(fulls[[t]])) {
+            fulls[[t]] <- left_join(
+                fulls[[t]],
+                select(fulls$deployments, id, deployment_code),
+                by=c('deployment_id'='id'),
+                relationship='many-to-one'
+            )
+        }
+        if('recording_id' %in% names(fulls[[t]])) {
+            fulls[[t]] <- left_join(
+                fulls[[t]],
+                select(fulls$recordings, id, recording_code, deployment_code),
+                by=c('recording_id' = 'id'),
+                relationship='many-to-one'
+            )
+        }
+        if(t == 'analyses') {
+            fulls[[t]] <- left_join(
+                fulls[[t]],
+                select(fulls$deployments, id, deployment_organization_code=organization_code),
+                by=c('deployment_id'='id'),
+                relationship='many-to-one'
+            )
+        }
+        result[[t]] <- fulls[[t]]
+    }
+    result
+}
+
+checkDbReplacements <- function(x, db, replaceWithNA=FALSE) {
+    joinRequirements <- list(
+        'deployments' = c('organization_code', 'deployment_code'),
+        'recordings' = c('organization_code', 'deployment_code', 'recording_code'),
+        'recording_intervals' = c('deployment_code', 'recording_code', 'recording_interval_start_datetime'),
+        'analyses' = c('deployment_organization_code', 'deployment_code', 'analysis_code'),
+        'tracks' = c('organization_code', 'deployment_code', 'track_code')
+    )
+    warns <- vector('list', length=0)
+    if(all(c('deployments', 'recordings') %in% names(x))) {
+        x$deployments <- combineDeviceCodes(x$deployments, x$recordings)
+    }
+    for(t in names(joinRequirements)) {
+        if(!t %in% names(x)) {
+            next
+        }
+        if(t == 'recording_intervals') {
+            db[[t]]$recording_interval_start_datetime <- psxTo8601(db[[t]]$recording_interval_start_datetime)
+        }
+        this <- doJoinCheck(x[[t]], db[[t]], by=joinRequirements[[t]], ix=TRUE, verbose=FALSE)
+        diffs <- checkTableDiffs(this, db[[t]])
+        if(nrow(diffs) > 0) {
+            newNA <- is.na(diffs$new)
+            if(isFALSE(replaceWithNA) &&
+               any(newNA)) {
+                for(d in which(newNA)) {
+                    val <- diffs$old[d]
+                    class(val) <- class(this[[diffs$column[d]]])
+                    x[[t]][diffs$row[d], diffs$column[d]] <- val
+                }
+                diffs <- diffs[!newNA, ]
+            }
+        }
+        if(nrow(diffs) > 0) {
+            warns <- addWarning(warns,
+                                deployment=this$deployment_code[diffs$row],
+                                table=t,
+                                type='Update Database Value',
+                                message=paste0('Updating value in column "', 
+                                               diffs$column, '":',
+                                               'OLD: ', diffs$old,
+                                               ', NEW:', diffs$new)
+            )
+        }
+        
+    }
+    if(!'warnings' %in% names(x)) {
+        x$warnings <- warns
+    } else {
+        x$warnings <- bind_rows(x$warnings, warns)
+    }
+    x
+}
+
+# before cast datetime cols to char    
+checkRowDiffs <- function(x, y) {
+    # store column, old, new
+    diffs <- list()
+    for(c in names(x)) {
+        if(!c %in% names(y)) {
+            next
+        }
+        valX <- x[[c]]
+        valY <- y[[c]]
+        if(is.na(valX) && is.na(valY)) {
+            next
+        }
+        if(grepl('_json', c)) {
+            valX <- fromJSON(valX)
+            # print(valY)
+            valY <- fromJSON(valY)
+            if(setequal(names(valX), names(valY))) {
+                valY <- valY[names(valX)]
+            }
+            valX <- toJSON(valX)
+            valY <- toJSON(valY)
+        }
+        if(grepl('_codes$', c)) {
+            valX <- strsplit(gsub(' ', '', valX), ',')[[1]]
+            valY <- strsplit(gsub(' ', '', valY), ',')[[1]]
+            if(setequal(valX, valY)) {
+                valY <- valX
+            }
+        }
+        if(isTRUE(all.equal(valX, valY))) {
+            next
+        }
+        diffs[[c]] <- list(old=as.character(y[[c]]), new=as.character(x[[c]]))
+    }
+    bind_rows(diffs, .id='column')
+}
+
+checkTableDiffs <- function(x, y) {
+    commNames <- intersect(names(x), names(y))
+    x <- x[c(commNames, 'new','JOINIX')]
+    y <- y[commNames]
+    for(c in grep('datetime', names(x), value=TRUE)) {
+        x[[c]] <- ymd_hms(psxTo8601(x[[c]]))
+    }
+    for(c in grep('datetime', names(y), value=TRUE)) {
+        y[[c]] <- ymd_hms(psxTo8601(y[[c]]))
+    }
+    for(c in grep('json', names(x), value=TRUE)) {
+        x[[c]] <- gsub("'", '"', x[[c]])
+    }
+    for(c in grep('json', names(y), value=TRUE)) {
+        y[[c]] <- gsub("'", '"', y[[c]])
+    }
+    result <- vector('list', length=nrow(x))
+    names(result) <- 1:nrow(x)
+    for(i in 1:nrow(x)) {
+        if(isTRUE(x$new[i])) {
+            next
+        }
+        diffs <- checkRowDiffs(x[i,], y[x$JOINIX[i],])
+        result[[i]] <- diffs
+    }
+    result <- bind_rows(result, .id='row')
+    if(is.null(result) || nrow(result) == 0) {
+        return(result)
+    }
+    result$row <- as.numeric(result$row)
+    result
+}
+
+combineDeviceCodes <- function(dep, rec) {
+    recCodes <- select(
+        rec,
+        deployment_code, recording_device_codes
+    ) %>% 
+        summarise(device_codes=paste0(recording_device_codes, collapse=','),
+                  .by=deployment_code)
+    recCodes$device_codes[recCodes$device_codes == 'NA'] <- NA
+    dep <- left_join(
+        dep,
+        recCodes,
+        by='deployment_code',
         relationship='one-to-one'
     )
-    result$recording_intervals <- db_raw$db_rec_int
-    result
+    dep <- unite(dep, 'deployment_device_codes',
+                 c('deployment_device_codes', 'device_codes'),
+                 sep=',',
+                 na.rm=TRUE)
+    dep$deployment_device_codes <- sapply(dep$deployment_device_codes, function(x) {
+        x <- gsub(' ', '', x)
+        x <- unique(strsplit(x, ',')[[1]])
+        if(all(is.na(x))) {
+            return(NA)
+        }
+        paste0(x, collapse=',')
+    }, USE.NAMES = FALSE)
+    dep
 }
