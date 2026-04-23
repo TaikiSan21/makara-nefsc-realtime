@@ -136,7 +136,7 @@ addWarning <- function(x, deployment, table, type, message) {
 # mandatory is constant list 
 # ncei flag is whether to check columns that are only mandatory for NCEI
 # dropEmpty is flag whether to drop empty non-mandatory columns from output
-checkMakTemplate <- function(x, templates, ncei=FALSE, dropEmpty=FALSE) {
+checkMakTemplate <- function(x, templates, ncei=FALSE, dropEmpty=FALSE, dropExtra=TRUE) {
     result <- templates[names(x)]
     onlyNotLost <- c('recording_start_datetime',
                      'recording_duration_secs',
@@ -201,7 +201,9 @@ checkMakTemplate <- function(x, templates, ncei=FALSE, dropEmpty=FALSE) {
             warns <- addWarning(warns, deployment='All', table=n, type='Extra Columns',
                                 message=paste0('Extra columns ', printN(names(thisData)[wrongNames], Inf),
                                                ' are present'))
-            thisData <- thisData[!wrongNames]
+            if(isTRUE(dropExtra)) {
+                thisData <- thisData[!wrongNames]
+            }
         }
         # check that codes are unique if they should be
         
@@ -803,6 +805,15 @@ checkDbReplacements <- function(x, db, replaceWithNA=FALSE) {
                     class(val) <- class(this[[diffs$column[d]]])
                     x[[t]][diffs$row[d], diffs$column[d]] <- val
                 }
+                warns <- addWarning(warns,
+                                    deployment=this$deployment_code[diffs$row[newNA]],
+                                    table=t,
+                                    type='Prevented Overwriting With NA',
+                                    message=paste0('Column "', diffs$column[newNA],
+                                                   '" in processed data was NA, but',
+                                                   ' database had value of ', diffs$old[newNA],
+                                                   ' that will not be overwritten')
+                )
                 diffs <- diffs[!newNA, ]
             }
         }
