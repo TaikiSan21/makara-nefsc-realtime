@@ -1,9 +1,9 @@
 # Packages: rjson, httr
-readRealtimeTrackingSmart <- function(secrets=NULL, token, id) {
+readRealtimeTrackingSmart <- function(secrets=NULL, token, id='3627925053433740') {
     if(!is.null(secrets)) {
         secrets <- readSmartSecrets(secrets)
         token <- secrets$smart_key
-        id <- secrets$rt_tracking_id
+        # id <- secrets$rt_tracking_id
     }
     header <- add_headers(Authorization = paste0('Bearer ', token))
     base <- 'https://api.smartsheetgov.com/2.0/sheets'
