@@ -1,12 +1,4 @@
-# Created by use_targets().
-# Follow the comments below to fill in this target script.
-# Then follow the manual to check and run the pipeline:
-#   https://books.ropensci.org/targets/walkthrough.html#inspect-the-pipeline
-
-# Load packages required to define the pipeline:
 library(targets)
-# library(tarchetypes) # Load other packages as needed.
-
 # Set target options:
 tar_option_set(
     packages = c('yaml',
@@ -18,7 +10,6 @@ tar_option_set(
                  'httr',
                  'bigrquery') # Packages that your targets need for their tasks.
 ) 
-# Run the R scripts in the R/ folder with your custom functions:
 # uncomment this chunk to force janky single-file update of my common functions
 # updateFunctions <- download.file('https://api.github.com/repos/TaikiSan21/makaraHelpers/contents/R/makara-functions.R',
 #                      destfile = 'functions/makara-functions.R',
@@ -65,7 +56,7 @@ list(
             skip_AK_analysis = TRUE,
             # fill rec start/end with analysis time for handful of deployments only
             fill_recording_times = TRUE,
-            # drop_species = c()
+            # species to exclude from detections/analyses
             drop_species = c('RV-G', 'OTHE'),
             # logical flag to not write detection CSV - ignore just for testing
             skip_writing_detections = FALSE
@@ -73,13 +64,6 @@ list(
     }),
     tar_target(constants, {
         list(
-            # dynamic_management_platform = TRUE,
-            # analysis_processing_code = 'REAL_TIME',
-            # detector_codes = 'LFDCS',
-            # analysis_granularity_code = 'INTERVAL',
-            # analysis_quality_code = 'FULLY_VALIDATED',
-            # analysis_code = 'REAL_TIME_ANALYSIS',
-            # analysis_protocol_reference = 'Baumgartner & Mussoline 2011 (doi:10.1121/1.3562166); Wilder et al. 2026 (LFDCS 2.0 Reference Guide)',
             analysis_json = as.character(toJSON(
                 list(MAX_MAHALANOBIS_DISTANCE = 3.0,
                      CALL_LIBRARY = 'clnb_gom7')
