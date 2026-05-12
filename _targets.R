@@ -40,6 +40,10 @@ list(
         list(
             # Allow replacing non-NA databse values with NA - almost always FALSE
             replace_db_with_na = FALSE,
+            # species to exclude from detections/analyses
+            drop_species = c('RV-G', 'OTHE'),
+            # skip uploading UAF_AK and OSU_AK ana/dets, metadata only
+            skip_AK_analysis = TRUE,
             # only used to avoid validatr warnings
             new_org = list(code='DFO', name='TEMP PASS CHECK'),
             # any deployment codes to force detection redownload
@@ -52,12 +56,8 @@ list(
             skip_already_makara = FALSE,
             # split into 1 ana per species vs 1 ana all species
             split_analyses = FALSE,
-            # skip uploading UAF_AK and OSU_AK ana/dets, metadata only
-            skip_AK_analysis = TRUE,
             # fill rec start/end with analysis time for handful of deployments only
             fill_recording_times = TRUE,
-            # species to exclude from detections/analyses
-            drop_species = c('RV-G', 'OTHE'),
             # logical flag to not write detection CSV - ignore just for testing
             skip_writing_detections = FALSE
         )
