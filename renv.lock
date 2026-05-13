@@ -4,7 +4,7 @@
     "Repositories": [
       {
         "Name": "CRAN",
-        "URL": "https://packagemanager.posit.co/cran/latest"
+        "URL": "https://cran.rstudio.com"
       }
     ]
   },
@@ -63,10 +63,10 @@
     },
     "Matrix": {
       "Package": "Matrix",
-      "Version": "1.7-2",
+      "Version": "1.7-5",
       "Source": "Repository",
       "VersionNote": "do also bump src/version.h, inst/include/Matrix/version.h",
-      "Date": "2025-01-20",
+      "Date": "2026-03-20",
       "Priority": "recommended",
       "Title": "Sparse and Dense Matrix Classes and Methods",
       "Description": "A rich hierarchy of sparse and dense matrix classes, including general, symmetric, triangular, and diagonal matrices with numeric, logical, or pattern entries.  Efficient methods for operating on such matrices, often wrapping the 'BLAS', 'LAPACK', and 'SuiteSparse' libraries.",
@@ -102,7 +102,7 @@
       "BuildResaveData": "no",
       "Encoding": "UTF-8",
       "NeedsCompilation": "yes",
-      "Author": "Douglas Bates [aut] (<https://orcid.org/0000-0001-8316-9503>), Martin Maechler [aut, cre] (<https://orcid.org/0000-0002-8685-9910>), Mikael Jagan [aut] (<https://orcid.org/0000-0002-3542-2938>), Timothy A. Davis [ctb] (<https://orcid.org/0000-0001-7614-6899>, SuiteSparse libraries, collaborators listed in dir(system.file(\"doc\", \"SuiteSparse\", package=\"Matrix\"), pattern=\"License\", full.names=TRUE, recursive=TRUE)), George Karypis [ctb] (<https://orcid.org/0000-0003-2753-1437>, METIS library, Copyright: Regents of the University of Minnesota), Jason Riedy [ctb] (<https://orcid.org/0000-0002-4345-4200>, GNU Octave's condest() and onenormest(), Copyright: Regents of the University of California), Jens Oehlschlägel [ctb] (initial nearPD()), R Core Team [ctb] (02zz1nj61, base R's matrix implementation)",
+      "Author": "Douglas Bates [aut] (ORCID: <https://orcid.org/0000-0001-8316-9503>), Martin Maechler [aut, cre] (ORCID: <https://orcid.org/0000-0002-8685-9910>), Mikael Jagan [aut] (ORCID: <https://orcid.org/0000-0002-3542-2938>), Timothy A. Davis [ctb] (ORCID: <https://orcid.org/0000-0001-7614-6899>, SuiteSparse libraries, collaborators listed in dir(system.file(\"doc\", \"SuiteSparse\", package=\"Matrix\"), pattern=\"License\", full.names=TRUE, recursive=TRUE)), George Karypis [ctb] (ORCID: <https://orcid.org/0000-0003-2753-1437>, METIS library, Copyright: Regents of the University of Minnesota), Jason Riedy [ctb] (ORCID: <https://orcid.org/0000-0002-4345-4200>, GNU Octave's condest() and onenormest(), Copyright: Regents of the University of California), Jens Oehlschlägel [ctb] (initial nearPD()), R Core Team [ctb] (ROR: <https://ror.org/02zz1nj61>, base R's matrix implementation)",
       "Maintainer": "Martin Maechler <mmaechler+Matrix@gmail.com>",
       "Repository": "CRAN"
     },
@@ -212,7 +212,7 @@
     },
     "bigrquery": {
       "Package": "bigrquery",
-      "Version": "1.6.1",
+      "Version": "1.6.2",
       "Source": "Repository",
       "Title": "An Interface to Google's 'BigQuery' 'API'",
       "Authors@R": "c( person(\"Hadley\", \"Wickham\", , \"hadley@posit.co\", role = c(\"aut\", \"cre\"), comment = c(ORCID = \"0000-0003-4757-117X\")), person(\"Jennifer\", \"Bryan\", , \"jenny@posit.co\", role = \"aut\", comment = c(ORCID = \"0000-0002-6983-2759\")), person(\"Posit Software, PBC\", role = c(\"cph\", \"fnd\")) )",
@@ -235,13 +235,13 @@
         "jsonlite",
         "lifecycle",
         "methods",
+        "nanoparquet (>= 0.3.1)",
         "prettyunits",
         "rlang (>= 1.1.0)",
-        "tibble",
-        "nanoparquet (>= 0.3.1)"
+        "tibble"
       ],
       "Suggests": [
-        "bigrquerystorage (>= 1.2.1)",
+        "bigrquerystorage (>= 1.2.2)",
         "blob",
         "covr",
         "dbplyr (>= 2.4.0)",
@@ -250,8 +250,8 @@
         "readr",
         "sodium",
         "testthat (>= 3.1.5)",
-        "wk (>= 0.3.2)",
-        "withr"
+        "withr",
+        "wk (>= 0.3.2)"
       ],
       "LinkingTo": [
         "cli",
@@ -261,10 +261,10 @@
       "Config/Needs/website": "tidyverse/tidytemplate",
       "Config/testthat/edition": "3",
       "Config/testthat/parallel": "TRUE",
-      "Config/testthat/start-first": "bq-table, dplyr",
+      "Config/testthat/start-first": "bq-table, dplyr, dbi-connection",
       "Encoding": "UTF-8",
-      "RoxygenNote": "7.3.3",
       "Collate": "'bigrquery-package.R' 'bq-auth.R' 'bq-dataset.R' 'bq-download.R' 'bq-field.R' 'bq-job.R' 'bq-param.R' 'bq-parse.R' 'bq-perform.R' 'bq-project.R' 'bq-projects.R' 'bq-query.R' 'bq-refs.R' 'bq-request.R' 'bq-table.R' 'bq-test.R' 'camelCase.R' 'connections-page.R' 'cpp11.R' 'dbi-driver.R' 'dbi-connection.R' 'dbi-result.R' 'dplyr.R' 'gs-object.R' 'import-standalone-obj-type.R' 'import-standalone-s3-register.R' 'import-standalone-types-check.R' 'utils.R' 'zzz.R'",
+      "Config/roxygen2/version": "8.0.0",
       "NeedsCompilation": "yes",
       "Author": "Hadley Wickham [aut, cre] (ORCID: <https://orcid.org/0000-0003-4757-117X>), Jennifer Bryan [aut] (ORCID: <https://orcid.org/0000-0002-6983-2759>), Posit Software, PBC [cph, fnd]",
       "Maintainer": "Hadley Wickham <hadley@posit.co>",
@@ -1267,9 +1267,9 @@
     },
     "lattice": {
       "Package": "lattice",
-      "Version": "0.22-6",
+      "Version": "0.22-9",
       "Source": "Repository",
-      "Date": "2024-03-20",
+      "Date": "2026-02-03",
       "Priority": "recommended",
       "Title": "Trellis Graphics for R",
       "Authors@R": "c(person(\"Deepayan\", \"Sarkar\", role = c(\"aut\", \"cre\"), email = \"deepayan.sarkar@r-project.org\", comment = c(ORCID = \"0000-0003-4107-1553\")), person(\"Felix\", \"Andrews\", role = \"ctb\"), person(\"Kevin\", \"Wright\", role = \"ctb\", comment = \"documentation\"), person(\"Neil\", \"Klepeis\", role = \"ctb\"), person(\"Johan\", \"Larsson\", role = \"ctb\", comment = \"miscellaneous improvements\"), person(\"Zhijian (Jason)\", \"Wen\", role = \"cph\", comment = \"filled contour code\"), person(\"Paul\", \"Murrell\", role = \"ctb\", email = \"paul@stat.auckland.ac.nz\"), person(\"Stefan\", \"Eng\", role = \"ctb\", comment = \"violin plot improvements\"), person(\"Achim\", \"Zeileis\", role = \"ctb\", comment = \"modern colors\"), person(\"Alexandre\", \"Courtiol\", role = \"ctb\", comment = \"generics for larrows, lpolygon, lrect and lsegments\") )",
@@ -1300,7 +1300,7 @@
       "URL": "https://lattice.r-forge.r-project.org/",
       "BugReports": "https://github.com/deepayan/lattice/issues",
       "NeedsCompilation": "yes",
-      "Author": "Deepayan Sarkar [aut, cre] (<https://orcid.org/0000-0003-4107-1553>), Felix Andrews [ctb], Kevin Wright [ctb] (documentation), Neil Klepeis [ctb], Johan Larsson [ctb] (miscellaneous improvements), Zhijian (Jason) Wen [cph] (filled contour code), Paul Murrell [ctb], Stefan Eng [ctb] (violin plot improvements), Achim Zeileis [ctb] (modern colors), Alexandre Courtiol [ctb] (generics for larrows, lpolygon, lrect and lsegments)",
+      "Author": "Deepayan Sarkar [aut, cre] (ORCID: <https://orcid.org/0000-0003-4107-1553>), Felix Andrews [ctb], Kevin Wright [ctb] (documentation), Neil Klepeis [ctb], Johan Larsson [ctb] (miscellaneous improvements), Zhijian (Jason) Wen [cph] (filled contour code), Paul Murrell [ctb], Stefan Eng [ctb] (violin plot improvements), Achim Zeileis [ctb] (modern colors), Alexandre Courtiol [ctb] (generics for larrows, lpolygon, lrect and lsegments)",
       "Maintainer": "Deepayan Sarkar <deepayan.sarkar@r-project.org>",
       "Repository": "CRAN"
     },
@@ -1481,7 +1481,7 @@
     },
     "makaraValidatr": {
       "Package": "makaraValidatr",
-      "Version": "0.3.0",
+      "Version": "0.2.4",
       "Source": "GitHub",
       "Title": "Data validation tools for Makara passive acoustics monitoring database",
       "Authors@R": "person(\"Jeff\", \"Walker\", , \"jeffrey.walker@noaa.gov\", role = c(\"aut\", \"cre\"))",
@@ -1520,7 +1520,7 @@
       "RemoteRepo": "makaraValidatr",
       "RemoteUsername": "jeffwalkernoaa",
       "RemoteRef": "HEAD",
-      "RemoteSha": "f63859dbd2455b062b6a2270c9a8453eb91f8cb7",
+      "RemoteSha": "41053c36e0b96b90f750dd61569b6ef56f674316",
       "NeedsCompilation": "no",
       "Author": "Jeff Walker [aut, cre]",
       "Maintainer": "Jeff Walker <jeffrey.walker@noaa.gov>"
@@ -2165,8 +2165,7 @@
       ],
       "RoxygenNote": "7.1.1",
       "NeedsCompilation": "no",
-      "Repository": "RSPM",
-      "Encoding": "UTF-8"
+      "Repository": "CRAN"
     },
     "stringi": {
       "Package": "stringi",
@@ -2612,8 +2611,7 @@
       "URL": "https://www.rforge.net/uuid",
       "BugReports": "https://github.com/s-u/uuid/issues",
       "NeedsCompilation": "yes",
-      "Repository": "CRAN",
-      "Encoding": "UTF-8"
+      "Repository": "CRAN"
     },
     "validate": {
       "Package": "validate",
