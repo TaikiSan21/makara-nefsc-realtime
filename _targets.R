@@ -1,15 +1,23 @@
 library(targets)
 # Set target options:
-tar_option_set(
-    packages = c('yaml',
-                 'dplyr',
-                 'tidyr',
-                 'lubridate',
-                 'makaraValidatr',
-                 'rjson', 
-                 'httr',
-                 'bigrquery') # Packages that your targets need for their tasks.
-) 
+library(yaml)
+library(dplyr)
+library(tidyr)
+library(lubridate)
+library(makaraValidatr)
+library(rjson)
+library(httr)
+library(bigrquery)
+# tar_option_set(
+#     packages = c('yaml',
+#                  'dplyr',
+#                  'tidyr',
+#                  'lubridate',
+#                  'makaraValidatr',
+#                  'rjson', 
+#                  'httr',
+#                  'bigrquery') # Packages that your targets need for their tasks.
+# ) 
 # uncomment this chunk to force janky single-file update of my common functions
 # updateFunctions <- download.file('https://api.github.com/repos/TaikiSan21/makaraHelpers/contents/R/makara-functions.R',
 #                      destfile = 'functions/makara-functions.R',
