@@ -250,8 +250,52 @@ checkMakTemplate <- function(x, templates, ncei=FALSE, dropEmpty=FALSE, dropExtr
                                     message=paste0("Time '", thisData[[t]][!alreadyNa][!goodTime], "' in column '",
                                                    t, "'could not be converted'"))
             }
-            
         }
+        # check start/end times - they are psx8601 chars here
+        startEnds <- list(
+            c('deployment_datetime', 'recovery_datetime'),
+            c('recording_start_datetime', 'recording_end_datetime'),
+            c('recording_usable_start_datetime', 'recording_usable_end_datetime'),
+            c('analysis_start_datetime', 'analysis_end_datetime'),
+            c('detection_start_datetime', 'detection_end_datetime'),
+            c('recording_interval_start_datetime', 'recording_interval_end_datetime')
+        )
+        # check start < end and start < now
+        for(i in seq_along(startEnds)) {
+            se <- startEnds[[i]]
+            startCol <- se[1]
+            endCol <- se[2]
+            if(!all(se %in% names(thisData))) {
+                next
+            }
+            naStart <- is.na(thisData[[startCol]])
+            naEnd <- is.na(thisData[[endCol]])
+            hasBoth <- !naStart & !naEnd
+            futureStart <- ymd_hms(thisData[[startCol]][!naStart]) > nowUTC()
+            if(any(futureStart)) {
+                warns <- addWarning(warns,
+                                    deployment=thisData$deployment_code[!naStart][futureStart],
+                                    type='Start Time in Future',
+                                    table=n,
+                                    message=paste0('Time ', thisData[[startCol]][!naStart][futureStart],
+                                                   ' in column ', startCol,
+                                                   ' is in the future')
+                )
+            }
+            startAfterEnd <- ymd_hms(thisData[[startCol]][hasBoth]) > ymd_hms(thisData[[endCol]][hasBoth])
+            if(any(startAfterEnd)) {
+                warns <- addWarning(warns,
+                                    deployment=thisData$deployment_code[hasBoth][startAfterEnd],
+                                    type='Start After End',
+                                    table=n,
+                                    message=paste0('Time ', thisData[[startCol]][hasBoth][startAfterEnd],
+                                                  ' in column ', startCol,
+                                                  ' is after time ', thisData[[endCol]][hasBoth][startAfterEnd],
+                                                  ' in column ', endCol)
+                )
+            }
+        }
+            
         # Check coordinate column ranges
         latCols <- grep('latitude', names(thisData), value=TRUE)
         for(l in latCols) {
@@ -475,14 +519,15 @@ checkDbValues <- function(x, db) {
 
 # Checks if deployments, recordings, and recording_intervals
 # are already in makara 
+joinRequirements <- list(
+    'deployments' = c('organization_code', 'deployment_code'),
+    'recordings' = c('organization_code', 'deployment_code', 'recording_code'),
+    'recording_intervals' = c('deployment_code', 'recording_code', 'recording_interval_start_datetime'),
+    'analyses' = c('deployment_organization_code', 'deployment_code', 'analysis_code'),
+    'tracks' = c('organization_code', 'deployment_code', 'track_code'),
+    'sensor_datasets' = c('organization_code', 'deployment_code', 'sensor_dataset_code')
+)
 checkAlreadyDb <- function(x, db) {
-    joinRequirements <- list(
-        'deployments' = c('organization_code', 'deployment_code'),
-        'recordings' = c('organization_code', 'deployment_code', 'recording_code'),
-        'recording_intervals' = c('deployment_code', 'recording_code', 'recording_interval_start_datetime'),
-        'analyses' = c('deployment_organization_code', 'deployment_code', 'analysis_code'),
-        'tracks' = c('organization_code', 'deployment_code', 'track_code')
-    )
     # tables to not check against
     noCheck <- c('detections', 'sensor_values', 'track_positions')
     for(j in names(x)) {
@@ -663,7 +708,8 @@ downloadBqMakara <- function(project='ggn-nmfs-pacm-dev-1', dataset='makara') {
                      'recordings', 
                      'analyses', 
                      'recording_intervals',
-                     'tracks')
+                     'tracks',
+                     'sensor_datasets')
     full_df <- vector('list', length=length(full_tables))
     names(full_df) <- full_tables
     for(i in seq_along(full_df)) {
@@ -776,13 +822,6 @@ formatBqMakara <- function(db_raw) {
 }
 
 checkDbReplacements <- function(x, db, replaceWithNA=FALSE) {
-    joinRequirements <- list(
-        'deployments' = c('organization_code', 'deployment_code'),
-        'recordings' = c('organization_code', 'deployment_code', 'recording_code'),
-        'recording_intervals' = c('deployment_code', 'recording_code', 'recording_interval_start_datetime'),
-        'analyses' = c('deployment_organization_code', 'deployment_code', 'analysis_code'),
-        'tracks' = c('organization_code', 'deployment_code', 'track_code')
-    )
     warns <- vector('list', length=0)
     if(all(c('deployments', 'recordings') %in% names(x))) {
         x$deployments <- combineDeviceCodes(x$deployments, x$recordings)
@@ -803,6 +842,9 @@ checkDbReplacements <- function(x, db, replaceWithNA=FALSE) {
                 for(d in which(newNA)) {
                     val <- diffs$old[d]
                     class(val) <- class(this[[diffs$column[d]]])
+                    if(grepl('datetime', diffs$column[d])) {
+                        val <- makeValidTime(val)
+                    }
                     x[[t]][diffs$row[d], diffs$column[d]] <- val
                 }
                 warns <- addWarning(warns,
@@ -936,4 +978,10 @@ combineDeviceCodes <- function(dep, rec) {
         paste0(x, collapse=',')
     }, USE.NAMES = FALSE)
     dep
+}
+
+nowUTC <- function() {
+    now <- Sys.time()
+    attr(now, 'tzone') <- 'UTC'
+    now
 }
