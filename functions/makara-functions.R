@@ -121,13 +121,13 @@ formatDatetime <- function(date, time, warn=TRUE, type=c('char', 'posix')) {
 }
 
 # Helper for tracking warnings in various checking functions
-addWarning <- function(x, deployment, table, type, message) {
+addWarning <- function(x, deployment, table, type, message, row=NA) {
     if('warnings' %in% names(x)) {
         x$warnings <- addWarning(x$warnings, deployment=deployment, table=table,
-                                 type=type, message=message)
+                                 type=type, message=message, row=row)
         return(x)
     }
-    bind_rows(x, list(deployment=deployment, table=table, type=type, message=message))
+    bind_rows(x, list(deployment=deployment, row=row, table=table, type=type, message=message))
 }
 
 # Check data against templates for missing mandatory data and other issues
@@ -137,7 +137,7 @@ addWarning <- function(x, deployment, table, type, message) {
 # ncei flag is whether to check columns that are only mandatory for NCEI
 # dropEmpty is flag whether to drop empty non-mandatory columns from output
 checkMakTemplate <- function(x, templates, ncei=FALSE, dropEmpty=FALSE, dropExtra=TRUE) {
-    result <- templates[names(x)]
+    result <- templates[names(x)[names(x) %in% names(templates)]]
     onlyNotLost <- c('recording_start_datetime',
                      'recording_duration_secs',
                      'recording_interval_secs',
@@ -145,6 +145,7 @@ checkMakTemplate <- function(x, templates, ncei=FALSE, dropEmpty=FALSE, dropExtr
                      'recording_n_channels',
                      'recording_timezone')
     col_defs <- makaraValidatr::column_definitions
+    refs <- makaraValidatr::reference_tables
     mandatory <- lapply(col_defs, function(x) {
         list(
             'always' = x$name[x$required],
@@ -162,6 +163,10 @@ checkMakTemplate <- function(x, templates, ncei=FALSE, dropEmpty=FALSE, dropExtr
         vals
     })
     for(n in names(x)) {
+        if(n == 'warnings') {
+            result[[n]] <- x$warnings
+            next
+        }
         thisTemp <- templates[[n]]
         thisMand <- mandatory[[n]]$always
         thisNcei <- mandatory[[n]]$ncei
@@ -214,12 +219,18 @@ checkMakTemplate <- function(x, templates, ncei=FALSE, dropEmpty=FALSE, dropExtr
             dupeDeps <- checkDupeDeps$dupe
             codePrint <- paste0('"', paste0(uniqueCols, collapse='-'), '"')
             if(any(dupeDeps)) {
+                if('deployment_code' %in% names(checkDupeDeps)) {
+                    depPrint <- checkDupeDeps$deployment_code[dupeDeps]
+                } else {
+                    depPrint <- ''
+                }
                 warns <- addWarning(warns, 
-                                    deployment=checkDupeDeps$deployment_code[dupeDeps],
+                                    deployment=depPrint,
+                                    row=which(dupeDeps),
                                     table=n,
                                     type=paste0('Duplicated ', codePrint),
                                     message=paste0(codePrint, 
-                                                   checkDupeDeps$deployment_code[dupeDeps],
+                                                   depPrint,
                                                    ' has multiple entries in ', n)
                 )
             }
@@ -244,7 +255,9 @@ checkMakTemplate <- function(x, templates, ncei=FALSE, dropEmpty=FALSE, dropExtr
             goodTime <- !is.na(times)
             thisData[[t]][!alreadyNa][goodTime] <- times[goodTime]
             if(any(!goodTime)) {
-                warns <- addWarning(warns, deployment=thisData$deployment_code[!alreadyNa][!goodTime],
+                warns <- addWarning(warns, 
+                                    deployment=thisData$deployment_code[!alreadyNa][!goodTime],
+                                    row=which(!alreadyNa)[!goodTime],
                                     type='Invalid Time',
                                     table=n,
                                     message=paste0("Time '", thisData[[t]][!alreadyNa][!goodTime], "' in column '",
@@ -275,6 +288,7 @@ checkMakTemplate <- function(x, templates, ncei=FALSE, dropEmpty=FALSE, dropExtr
             if(any(futureStart)) {
                 warns <- addWarning(warns,
                                     deployment=thisData$deployment_code[!naStart][futureStart],
+                                    row=which(!naStart)[futureStart],
                                     type='Start Time in Future',
                                     table=n,
                                     message=paste0('Time ', thisData[[startCol]][!naStart][futureStart],
@@ -286,23 +300,26 @@ checkMakTemplate <- function(x, templates, ncei=FALSE, dropEmpty=FALSE, dropExtr
             if(any(startAfterEnd)) {
                 warns <- addWarning(warns,
                                     deployment=thisData$deployment_code[hasBoth][startAfterEnd],
+                                    row=which(hasBoth)[startAfterEnd],
                                     type='Start After End',
                                     table=n,
                                     message=paste0('Time ', thisData[[startCol]][hasBoth][startAfterEnd],
-                                                  ' in column ', startCol,
-                                                  ' is after time ', thisData[[endCol]][hasBoth][startAfterEnd],
-                                                  ' in column ', endCol)
+                                                   ' in column ', startCol,
+                                                   ' is after time ', thisData[[endCol]][hasBoth][startAfterEnd],
+                                                   ' in column ', endCol)
                 )
             }
         }
-            
+        
         # Check coordinate column ranges
         latCols <- grep('latitude', names(thisData), value=TRUE)
         for(l in latCols) {
             oob <- !is.na(thisData[[l]]) &
                 (thisData[[l]] > 90 | thisData[[l]] < -90)
             if(any(oob)) {
-                warns <- addWarning(warns, deployment=thisData$deployment_code[oob],
+                warns <- addWarning(warns,
+                                    deployment=thisData$deployment_code[oob],
+                                    row=which(oob),
                                     type='Latitude Out of Bounds',
                                     table=n,
                                     message=paste0("Latitude '", thisData[[l]][oob], "' in column '",
@@ -315,7 +332,9 @@ checkMakTemplate <- function(x, templates, ncei=FALSE, dropEmpty=FALSE, dropExtr
             oob <- !is.na(thisData[[l]]) &
                 (thisData[[l]] > 180 | thisData[[l]] < -180)
             if(any(oob)) {
-                warns <- addWarning(warns, deployment=thisData$deployment_code[oob],
+                warns <- addWarning(warns, 
+                                    deployment=thisData$deployment_code[oob],
+                                    row=which(oob),
                                     type='Longitude Out of Bounds',
                                     table=n,
                                     message=paste0("Longitude '", thisData[[l]][oob], "' in column '",
@@ -339,7 +358,9 @@ checkMakTemplate <- function(x, templates, ncei=FALSE, dropEmpty=FALSE, dropExtr
             if(m == 'recording_timezone') {
                 badTz <- !grepl('^UTC[+-]?[0-9:]{0,5}$', thisData[[m]])
                 if(any(badTz)) {
-                    warns <- addWarning(warns, deployment=thisData$deployment_code[badTz],
+                    warns <- addWarning(warns, 
+                                        deployment=thisData$deployment_code[badTz],
+                                        row=which(badTz),
                                         type='Invalid Timezone',
                                         table=n,
                                         message=paste0('Timezone ', thisData[[m]][badTz], ' is invalid'))
@@ -371,14 +392,91 @@ checkMakTemplate <- function(x, templates, ncei=FALSE, dropEmpty=FALSE, dropExtr
             }
             
             if(any(naVals)) {
-                warns <- addWarning(warns, deployment=unique(thisData$deployment_code[naVals]),
+                warns <- addWarning(warns,
+                                    deployment=thisData$deployment_code[naVals],
+                                    row=which(naVals),
                                     type='NA in Mandatory Field',
                                     table=n,
                                     message=paste0("Mandatory column '",
                                                    m, "' is NA"))
             }
         }
+        # check some reference tables
+        if(n == 'detections') {
+            wrongSource <- !thisData$detection_sound_source_code %in% refs$sound_sources$code
+            if(any(wrongSource)) {
+                warns <- addWarning(warns,
+                                    deployment=thisData$deployment_code[wrongSource],
+                                    row=which(wrongSource),
+                                    type='Invalid Sound Source',
+                                    table=n,
+                                    message=paste0('Sound source code ', 
+                                                   thisData$detection_sound_source_code[wrongSource],
+                                                   ' is not a valid Makara sound_source code')
+                )
+            }
+            wrongCall <- !thisData$detection_call_type_code %in% refs$call_types$code
+            if(any(wrongCall)) {
+                warns <- addWarning(warns,
+                                    deployment=thisData$deployment_code[wrongCall],
+                                    row=which(wrongCall),
+                                    type='Invalid Call Type',
+                                    table=n,
+                                    message=paste0('Call type code ', 
+                                                   thisData$detection_call_type_code[wrongCall],
+                                                   ' is not a valid Makara call_type code')
+                )
+            }
+        }
         
+        if(n == 'analyses') {
+            badSources <- sapply(thisData$analysis_sound_source_codes, function(c) {
+                val <- strsplit(c, ',')[[1]]
+                bads <- !val %in% refs$sound_sources$code
+                if(any(bads)) {
+                    return(paste0(val[bads], collapse=','))
+                } 
+                NA
+            })
+            isBad <- !is.na(badSources)
+            if(any(isBad)) {
+                warns <- addWarning(warns,
+                                    deployment=thisData$deployment_code[isBad],
+                                    row=which(isBad),
+                                    table=n,
+                                    type='Invalid Sound Source',
+                                    message=paste0('Sound source code(s) ',
+                                                   badSources[isBad],
+                                                   ' is not a valid Makara sound_source code')
+                )
+            }
+        }
+        # check for JSON NA values
+        jsonCols <- grep('_json', names(thisData), value=TRUE)
+        if(length(jsonCols) > 0) {
+            for(j in jsonCols) {
+                naJson <- checkNaJSON(thisData[[j]], value=FALSE)
+                if(!any(naJson)) {
+                    next
+                }
+                naFields <- checkNaJSON(thisData[[j]], value=TRUE)
+                naDep <- if('deployment_code' %in% names(thisData)) {
+                    thisData$deployment_code[naJson]
+                } else {
+                    ''
+                }
+                warns <- addWarning(warns,
+                                    deployment=naDep,
+                                    row=which(naJson),
+                                    table=n,
+                                    type='JSON Field NA',
+                                    message=paste0('JSON field(s) ',
+                                                   printN(naFields[naJson], Inf),
+                                                   ' in column ', j, ' are NA')
+                )
+                
+            }
+        }
         # Remove columns that werent in our loaded data and are not mandatory
         if(isTRUE(dropEmpty)) {
             keepNames <- names(thisTemp) %in% unique(c(names(thisData), thisMand))
@@ -392,6 +490,28 @@ checkMakTemplate <- function(x, templates, ncei=FALSE, dropEmpty=FALSE, dropExtr
         result$warnings <- bind_rows(result$warnings, warns)
     }
     result
+}
+
+checkNaJSON <- function(x, value=FALSE) {
+    if(length(x) > 1) {
+        return(sapply(x, function(y) checkNaJSON(y, value=value), USE.NAMES = FALSE))
+    }
+    if(is.na(x) || x == '') {
+        if(isTRUE(value)) {
+            return('')
+        } else {
+            return(FALSE)
+        }
+    }
+    val <- fromJSON(x)
+    isNA <- sapply(val, function(v) {
+        if(any(is.na(v))) return(TRUE)
+        any(v == 'NA')
+    })
+    if(isFALSE(value)) {
+        return(any(isNA))
+    }
+    paste0(names(val)[isNA], collapse=',')
 }
 
 # Pretty printing helper for warnings created with `addWarning`
@@ -449,19 +569,105 @@ makeValidTime <- function(x) {
 # Check if codes being used are actually in database
 # Currently checks recording_device_codes, deployment device_codes, project_codes,
 # site_codes, using organization_code in the check
-checkDbValues <- function(x, db) {
+checkDbValues <- function(x, db=NULL) {
+    if(is.null(db)) {
+        return(x)
+    }
+    # if submission has these tables add them to the db to avoid angry
+    if('devices' %in% names(x)) {
+        db$devices <- bind_rows(
+            db$devices,
+            select(x$devices, organization_code, device_code)
+        )
+        db$devices <- distinct(select(db$devices, organization_code, device_code))
+    }
+    if('projects' %in% names(x)) {
+        db$projects <- bind_rows(
+            db$projects,
+            select(x$projects, organization_code, project_code)
+        )
+        db$projects <- distinct(select(db$projects, organization_code, project_code))     
+    }
+    if('sites' %in% names(x)) {
+        db$sites <- bind_rows(
+            db$sites,
+            select(x$sites, organization_code, site_code)
+        )
+        db$sites <- distinct(select(db$sites, organization_code, site_code))
+    }
     warns <- vector('list', length=0)
-    recDevCheck <- left_join(x$recordings,
-                             mutate(db$devices, JOINCHECK=TRUE),
-                             by=c('organization_code', 'recording_device_codes'='device_code')
-    )
-    recDevCheck <- is.na(recDevCheck$JOINCHECK)
-    if(any(recDevCheck)) {
-        warns <- addWarning(warns, deployment=x$recordings$deployment_code[recDevCheck],
-                            table='recordings',
-                            type="New 'device_code'",
-                            message=paste0('recording_device_code ', x$recordings$recording_device_codes[recDevCheck],
-                                           ' is not present in database.devices'))
+    recDevCheck <- x$recordings %>% 
+        mutate(ORIGROW=1:n(),
+               recording_device_codes = strsplit(recording_device_codes, ',')) %>% 
+        unnest(recording_device_codes) %>% 
+        left_join(mutate(db$devices, JOINCHECK=TRUE),
+                  by=c('organization_code', 'recording_device_codes'='device_code')
+        )
+    missRecDev <- is.na(recDevCheck$JOINCHECK)
+    if(any(missRecDev)) {
+        missCodes <- recDevCheck$recording_device_codes[missRecDev]
+        missOrgs <- recDevCheck$organization_code[missRecDev]
+        missRows <- recDevCheck$ORIGROW[missRecDev]
+        missNoMatch <- rep(FALSE, length(missCodes))
+        missOneMatch <- rep(FALSE, length(missCodes))
+        newOneMatch <- character(0)
+        missMultiMatch <- rep(FALSE, length(missCodes)) 
+        for(c in seq_along(missCodes)) {
+            inOther <- db$devices$device_code == missCodes[c]
+            nMatch <- sum(inOther)
+            if(nMatch == 0) {
+                missNoMatch[c] <- TRUE
+            }
+            if(nMatch == 1) {
+                missOneMatch[c] <- TRUE
+                matchOrg <- db$devices$organization_code[inOther]
+                newCode <- paste0(matchOrg, ':', missCodes[c])
+                newOneMatch <- c(newOneMatch, newCode)
+                x$recordings$recording_device_codes[missRows[c]] <- 
+                    gsub(paste0('^(', missCodes[c], ')(,|$)'), 
+                         paste0(matchOrg, ':', '\\1\\2'), 
+                         x$recordings$recording_device_codes[missRows[c]])
+            }
+            if(nMatch > 1) {
+                missMultiMatch[c] <- TRUE
+            }
+        }
+        if(any(missNoMatch)) {
+            warns <- addWarning(warns, deployment=recDevCheck$deployment_code[missRecDev][missNoMatch],
+                                row=recDevCheck$ORIGROW[missRecDev][missNoMatch],
+                                table='recordings',
+                                type="New 'device_code'",
+                                message=paste0('recording_device_code ', 
+                                               recDevCheck$recording_device_codes[missRecDev][missNoMatch],
+                                               ' is not present in database.devices'))
+        }
+        if(any(missOneMatch)) {
+            warns <- addWarning(warns, deployment=recDevCheck$deployment_code[missRecDev][missOneMatch],
+                                row=recDevCheck$ORIGROW[missRecDev][missOneMatch],
+                                table='recordings',
+                                type="New 'device_code'",
+                                message=paste0('recording_device_code ', 
+                                               recDevCheck$recording_device_codes[missRecDev][missOneMatch],
+                                               ' is not present for ', missOrgs[missOneMatch],
+                                               ', but matched exactly 1 other org. Replaced with ', 
+                                               newOneMatch))
+        }
+        if(any(missMultiMatch)) {
+            warns <- addWarning(warns, deployment=recDevCheck$deployment_code[missRecDev][missMultiMatch],
+                                row=recDevCheck$ORIGROW[missRecDev][missMultiMatch],
+                                table='recordings',
+                                type="New 'device_code'",
+                                message=paste0('recording_device_code ', 
+                                               recDevCheck$recording_device_codes[missRecDev][missMultiMatch],
+                                               ' is not present for ', missOrgs[missMultiMatch],
+                                               ', but matched multiple other orgs so could not be replaced.'))
+        }
+        # warns <- addWarning(warns, deployment=recDevCheck$deployment_code[missRecDev],
+        #                     row=recDevCheck$ORIGROW[missRecDev],
+        #                     table='recordings',
+        #                     type="New 'device_code'",
+        #                     message=paste0('recording_device_code ', recDevCheck$recording_device_codes[missRecDev],
+        #                                    ' is not present in database.devices'))
         # warning(sum(recDevCheck), ' deployments (', printN(x$recordings$deployment_code[recDevCheck], Inf),
         #         ') have recording device codes that are not present in the database')
     }
@@ -471,6 +677,7 @@ checkDbValues <- function(x, db) {
     missProj <- is.na(projCheck$JOINCHECK)
     if(any(missProj)) {
         warns <- addWarning(warns, deployment=x$deployments$deployment_code[missProj],
+                            row=which(missProj),
                             table='deployments',
                             type="New 'project_code'",
                             message=paste0('project_code ', x$deployments$project_code[missProj], 
@@ -484,6 +691,7 @@ checkDbValues <- function(x, db) {
     missSite <- is.na(siteCheck$JOINCHECK)
     if(any(missSite)) {
         warns <- addWarning(warns, deployment=x$deployments$deployment_code[missSite],
+                            row=which(missSite),
                             table='deployments', 
                             type="New 'site_code'",
                             message=paste0('site_code ', x$deployments$site_code[missSite], 
@@ -494,7 +702,8 @@ checkDbValues <- function(x, db) {
     devCheck <- select(
         x$deployments, organization_code, deployment_code, deployment_device_codes
     ) %>% 
-        mutate(deployment_device_codes = strsplit(deployment_device_codes, ',')) %>% 
+        mutate(ORIGROW=1:n(),
+               deployment_device_codes = strsplit(deployment_device_codes, ',')) %>% 
         unnest(deployment_device_codes) %>% 
         left_join(
             mutate(db$devices, JOINCHECK=TRUE),
@@ -502,12 +711,70 @@ checkDbValues <- function(x, db) {
         )
     missDev <- is.na(devCheck$JOINCHECK) & !is.na(devCheck$deployment_device_codes)
     if(any(missDev)) {
-        warns <- addWarning(warns, deployment=devCheck$deployment_code[missDev],
-                            table='deployments',
-                            type="New 'device_code'",
-                            message=paste0('device_code ', devCheck$deployment_device_codes[missDev],
-                                           ' is not present in database.devices')
-        )
+        missCodes <- devCheck$deployment_device_codes[missDev]
+        missOrgs <- devCheck$organization_code[missDev]
+        missRows <- devCheck$ORIGROW[missDev]
+        missNoMatch <- rep(FALSE, length(missCodes))
+        missOneMatch <- rep(FALSE, length(missCodes))
+        newOneMatch <- character(0)
+        missMultiMatch <- rep(FALSE, length(missCodes)) 
+        for(c in seq_along(missCodes)) {
+            inOther <- db$devices$device_code == missCodes[c]
+            nMatch <- sum(inOther)
+            if(nMatch == 0) {
+                missNoMatch[c] <- TRUE
+            }
+            if(nMatch == 1) {
+                missOneMatch[c] <- TRUE
+                matchOrg <- db$devices$organization_code[inOther]
+                newCode <- paste0(matchOrg, ':', missCodes[c])
+                newOneMatch <- c(newOneMatch, newCode)
+                x$deployments$deployment_device_codes[missRows[c]] <- 
+                    gsub(paste0('^(', missCodes[c], ')(,|$)'), 
+                         paste0(matchOrg, ':', '\\1\\2'), 
+                         x$deployments$deployment_device_codes[missRows[c]])
+            }
+            if(nMatch > 1) {
+                missMultiMatch[c] <- TRUE
+            }
+        }
+        if(any(missNoMatch)) {
+            warns <- addWarning(warns, deployment=devCheck$deployment_code[missDev][missNoMatch],
+                                row=devCheck$ORIGROW[missDev][missNoMatch],
+                                table='deployments',
+                                type="New 'device_code'",
+                                message=paste0('deployment_device_codes ', 
+                                               devCheck$deployment_device_codes[missDev][missNoMatch],
+                                               ' is not present in database.devices'))
+        }
+        if(any(missOneMatch)) {
+            warns <- addWarning(warns, deployment=devCheck$deployment_code[missDev][missOneMatch],
+                                row=devCheck$ORIGROW[missDev][missOneMatch],
+                                table='deployments',
+                                type="New 'device_code'",
+                                message=paste0('deployment_device_codes ', 
+                                               devCheck$deployment_device_codes[missDev][missOneMatch],
+                                               ' is not present for ', missOrgs[missOneMatch],
+                                               ', but matched exactly 1 other org. Replaced with ', 
+                                               newOneMatch))
+        }
+        if(any(missMultiMatch)) {
+            warns <- addWarning(warns, deployment=devCheck$deployment_code[missDev][missMultiMatch],
+                                row=devCheck$ORIGROW[missDev][missMultiMatch],
+                                table='deployments',
+                                type="New 'device_code'",
+                                message=paste0('deployment_device_codes ', 
+                                               devCheck$deployment_device_codes[missDev][missMultiMatch],
+                                               ' is not present for ', missOrgs[missMultiMatch],
+                                               ', but matched multiple other orgs so could not be replaced.'))
+        }
+        # warns <- addWarning(warns, deployment=devCheck$deployment_code[missDev],
+        #                     row=devCheck$ORIGROW[missDev],
+        #                     table='deployments',
+        #                     type="New 'device_code'",
+        #                     message=paste0('device_code ', devCheck$deployment_device_codes[missDev],
+        #                                    ' is not present in database.devices')
+        # )
     }
     if(!'warnings' %in% names(x)) {
         x$warnings <- warns
@@ -527,9 +794,10 @@ joinRequirements <- list(
     'tracks' = c('organization_code', 'deployment_code', 'track_code'),
     'sensor_datasets' = c('organization_code', 'deployment_code', 'sensor_dataset_code')
 )
+# check if these entries are already in Makara using joinReqs above
 checkAlreadyDb <- function(x, db) {
     # tables to not check against
-    noCheck <- c('detections', 'sensor_values', 'track_positions')
+    noCheck <- c('detections', 'sensor_values', 'track_positions', 'warnings')
     for(j in names(x)) {
         if(j %in% noCheck) {
             next
@@ -573,6 +841,7 @@ checkDetectionData <- function(x) {
     if(any(anaCheck$new)) {
         warns <- addWarning(warns, 
                             deployment=anaCheck$deployment_code[anaCheck$new],
+                            row=which(anaCheck$new),
                             type='analysis_code not present in analyses',
                             table='detections',
                             message=paste0("analysis code '", anaCheck$analysis_code[anaCheck$new],
@@ -587,6 +856,7 @@ checkDetectionData <- function(x) {
     if(any(speciesCheck$new)) {
         warns <- addWarning(warns, 
                             deployment=speciesCheck$deployment_code[speciesCheck$new],
+                            row=which(speciesCheck$new),
                             type='detection_sound_source_code not present in analysis_sound_source_codes',
                             table='detections',
                             message=paste0("detection_sound_source_code '",
@@ -628,6 +898,7 @@ doJoinCheck <- function(x, y, by, name=NULL, ix=FALSE, verbose=TRUE) {
 }
 
 # Only works after `checkAlreadyDb` run to create "new" column
+# just removes non-new rows from all tables with a 'new'
 dropAlreadyDb <- function(x, drop=FALSE) {
     for(n in names(x)) {
         if('new' %in% names(x[[n]])) {
@@ -820,7 +1091,9 @@ formatBqMakara <- function(db_raw) {
     }
     result
 }
-
+# checks against existing values in database
+# warns if replacing with something new 
+# or if trying to overwrite with NA
 checkDbReplacements <- function(x, db, replaceWithNA=FALSE) {
     warns <- vector('list', length=0)
     if(all(c('deployments', 'recordings') %in% names(x))) {
@@ -849,6 +1122,7 @@ checkDbReplacements <- function(x, db, replaceWithNA=FALSE) {
                 }
                 warns <- addWarning(warns,
                                     deployment=this$deployment_code[diffs$row[newNA]],
+                                    row=diffs$row[newNA],
                                     table=t,
                                     type='Prevented Overwriting With NA',
                                     message=paste0('Column "', diffs$column[newNA],
@@ -862,6 +1136,7 @@ checkDbReplacements <- function(x, db, replaceWithNA=FALSE) {
         if(nrow(diffs) > 0) {
             warns <- addWarning(warns,
                                 deployment=this$deployment_code[diffs$row],
+                                row=diffs$row,
                                 table=t,
                                 type='Update Database Value',
                                 message=paste0('Updating value in column "', 
@@ -984,4 +1259,59 @@ nowUTC <- function() {
     now <- Sys.time()
     attr(now, 'tzone') <- 'UTC'
     now
+}
+
+squishList <- function(myList, unique=FALSE) {
+    myNames <- unique(names(myList))
+    if(is.null(myNames)) return(myList)
+    result <- vector('list', length=length(myNames))
+    names(result) <- myNames
+    for(n in myNames) {
+        whichThisName <- which(names(myList)==n)
+        thisNameData <- myList[whichThisName]
+        # thisClasses <- sapply(thisNameData, class)
+        # This is a mess, but oh well.
+        result[[n]] <- if(length(whichThisName)==1) {
+            thisNameData[[1]]
+            # } else if('list' %in% thisClasses) {
+        } else if(all(sapply(thisNameData, function(x) inherits(x, 'list')))) {
+            thisNameData <- unlist(thisNameData, recursive = FALSE)
+            names(thisNameData) <- gsub(paste0(n, '\\.'), '', names(thisNameData))
+            squishList(thisNameData, unique)
+            # } else if(all(thisClasses=='data.frame')) {
+        } else if(all(sapply(thisNameData, function(x) inherits(x, 'data.frame')))) {
+            if(isTRUE(unique)) {
+                distinct(bind_rows(thisNameData))
+            } else {
+                bind_rows(thisNameData)
+            }
+            # } else if(all(thisClasses=='NULL')) {
+        } else if(all(sapply(thisNameData, function(x) inherits(x, 'NULL')))) {
+            next
+        } else if(all(sapply(thisNameData, function(x) inherits(x, 'matrix'))) &&
+                  length(unique(sapply(thisNameData, ncol))) == 1) {
+            do.call(rbind, thisNameData)
+        } else {
+            # thisNameData[[1]]
+            if(isTRUE(unique)) {
+                unique(unlist(thisNameData, use.names = FALSE))
+            } else {
+                unlist(thisNameData, use.names = FALSE)
+            }
+        }
+    }
+    result
+}
+
+captureWarnings <- function(expr, deployment, table, type, name) {
+    warns <- list()
+    x <- withCallingHandlers(expr, warning = function(w) {
+        msg <- conditionMessage(w)
+        warns <<- addWarning(warns, deployment=deployment, table=table, type=type, message=msg)
+        tryInvokeRestart('muffleWarning')
+    })
+    x <- list('output'=x)
+    names(x) <- name
+    x$warnings <- warns
+    x
 }
