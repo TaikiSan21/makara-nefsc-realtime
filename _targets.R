@@ -67,7 +67,8 @@ list(
             # fill rec start/end with analysis time for handful of deployments only
             fill_recording_times = TRUE,
             # logical flag to not write detection CSV - ignore just for testing
-            skip_writing_detections = FALSE
+            skip_writing_detections = FALSE,
+            update_device_orgs = TRUE
         )
     }),
     tar_target(constants, {
@@ -560,7 +561,7 @@ list(
                                 templates=templates,
                                 ncei=FALSE,
                                 dropEmpty = TRUE)
-        out <- checkDbValues(out, db)
+        out <- checkDbValues(out, db, updateDeviceOrgs=params$update_device_orgs)
         out <- checkDetectionData(out)
         out <- checkDbReplacements(out, db, replaceWithNA=params$replace_db_with_na)
         checkWarnings(out)
