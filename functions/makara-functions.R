@@ -122,6 +122,9 @@ formatDatetime <- function(date, time, warn=TRUE, type=c('char', 'posix')) {
 
 # Helper for tracking warnings in various checking functions
 addWarning <- function(x, deployment, table, type, message, row=NA) {
+    if(!all(is.na(row))) {
+        row <- as.character(row)
+    }
     if('warnings' %in% names(x)) {
         x$warnings <- addWarning(x$warnings, deployment=deployment, table=table,
                                  type=type, message=message, row=row)
@@ -136,7 +139,7 @@ addWarning <- function(x, deployment, table, type, message, row=NA) {
 # mandatory is constant list 
 # ncei flag is whether to check columns that are only mandatory for NCEI
 # dropEmpty is flag whether to drop empty non-mandatory columns from output
-checkMakTemplate <- function(x, templates, ncei=FALSE, dropEmpty=FALSE, dropExtra=TRUE) {
+checkMakTemplate <- function(x, templates, ncei=FALSE, dropEmpty=FALSE, dropExtra=TRUE, dropMandatoryNA=FALSE) {
     result <- templates[names(x)[names(x) %in% names(templates)]]
     onlyNotLost <- c('recording_start_datetime',
                      'recording_duration_secs',
@@ -242,6 +245,76 @@ checkMakTemplate <- function(x, templates, ncei=FALSE, dropEmpty=FALSE, dropExtr
                                 message=paste0('Mandatory columns ', 
                                                printN(thisMand[missMand], Inf), ' are missing'))
         }
+        # check that values in mandatory columns are not NA or ''
+        for(m in thisMand[!missMand]) {
+            if(is.character(thisData[[m]])) {
+                blankChar <- !is.na(thisData[[m]]) & thisData[[m]] == ''
+                if(any(blankChar)) {
+                    # warns <- addWarning(warns, deployment=thisData$deployment_code[blankChar],
+                    #                     type='Blank Characters in Mandatory Field',
+                    #                     table=n,
+                    #                     message=paste0("Character values in mandatory column '",
+                    #                                    m, "' are empty, will be replaced with NA"))
+                }
+                thisData[[m]][blankChar] <- NA
+            }
+            if(m == 'recording_timezone') {
+                badTz <- !grepl('^UTC[+-]?[0-9:]{0,5}$', thisData[[m]])
+                if(any(badTz)) {
+                    warns <- addWarning(warns, 
+                                        deployment=thisData$deployment_code[badTz],
+                                        row=which(badTz),
+                                        type='Invalid Timezone',
+                                        table=n,
+                                        message=paste0('Timezone ', thisData[[m]][badTz], ' is invalid'))
+                }
+            }
+            
+            naVals <- is.na(thisData[[m]])
+            # some columns in recordings are only mandatory if not lost
+            # and not UNUSABLE
+            if(n == 'recordings' &&
+               m %in% onlyNotLost) {
+                notLost <- !sapply(thisData$recording_device_lost, isTRUE)
+                naVals <- naVals & notLost
+                if('recording_quality_code' %in% names(thisData)) {
+                    notUnusable <- thisData$recording_quality_code != 'UNUSABLE' | is.na(thisData$recording_quality_code)
+                    naVals <- naVals & notUnusable
+                }
+            }
+            if(n == 'detections' &&
+               m == 'localization_method_code') {
+                isLocalized <- !is.na(thisData$localization_latitude)
+                naVals <- naVals & isLocalized
+            }
+            
+            if(n == 'detections' &&
+               m == 'localization_depth_method_code') {
+                isLocalizedDepth <- !is.na(thisData$localization_depth_m)
+                naVals <- naVals & isLocalizedDepth
+            }
+            
+            if(any(naVals)) {
+                if(isTRUE(dropMandatoryNA)) {
+                    warns <- addWarning(warns,
+                                        deployment=thisData$deployment_code[naVals],
+                                        row='Removed from output',
+                                        type='NA in Mandatory Field',
+                                        table=n,
+                                        message=paste0("Mandatory column '",
+                                                       m, "' is NA"))
+                    thisData <- thisData[!naVals, ]
+                } else {
+                    warns <- addWarning(warns,
+                                        deployment=thisData$deployment_code[naVals],
+                                        row=which(naVals),
+                                        type='NA in Mandatory Field',
+                                        table=n,
+                                        message=paste0("Mandatory column '",
+                                                       m, "' is NA"))
+                }
+            }
+        }
         # Fix time columns
         timeCols <- grep('datetime', names(thisData), value=TRUE)
         for(t in timeCols) {
@@ -281,8 +354,8 @@ checkMakTemplate <- function(x, templates, ncei=FALSE, dropEmpty=FALSE, dropExtr
             if(!all(se %in% names(thisData))) {
                 next
             }
-            naStart <- is.na(thisData[[startCol]])
-            naEnd <- is.na(thisData[[endCol]])
+            naStart <- is.na(thisData[[startCol]]) | thisData[[startCol]] == ''
+            naEnd <- is.na(thisData[[endCol]]) | thisData[[endCol]] == ''
             hasBoth <- !naStart & !naEnd
             futureStart <- ymd_hms(thisData[[startCol]][!naStart]) > nowUTC()
             if(any(futureStart)) {
@@ -342,65 +415,7 @@ checkMakTemplate <- function(x, templates, ncei=FALSE, dropEmpty=FALSE, dropExtr
                 )
             }
         }
-        # check that values in mandatory columns are not NA or ''
-        for(m in thisMand[!missMand]) {
-            if(is.character(thisTemp[[m]])) {
-                blankChar <- !is.na(thisData[[m]]) & thisData[[m]] == ''
-                if(any(blankChar)) {
-                    # warns <- addWarning(warns, deployment=thisData$deployment_code[blankChar],
-                    #                     type='Blank Characters in Mandatory Field',
-                    #                     table=n,
-                    #                     message=paste0("Character values in mandatory column '",
-                    #                                    m, "' are empty, will be replaced with NA"))
-                }
-                thisData[[m]][blankChar] <- NA
-            }
-            if(m == 'recording_timezone') {
-                badTz <- !grepl('^UTC[+-]?[0-9:]{0,5}$', thisData[[m]])
-                if(any(badTz)) {
-                    warns <- addWarning(warns, 
-                                        deployment=thisData$deployment_code[badTz],
-                                        row=which(badTz),
-                                        type='Invalid Timezone',
-                                        table=n,
-                                        message=paste0('Timezone ', thisData[[m]][badTz], ' is invalid'))
-                }
-            }
-            
-            naVals <- is.na(thisData[[m]])
-            # some columns in recordings are only mandatory if not lost
-            # and not UNUSABLE
-            if(n == 'recordings' &&
-               m %in% onlyNotLost) {
-                notLost <- !sapply(thisData$recording_device_lost, isTRUE)
-                naVals <- naVals & notLost
-                if('recording_quality_code' %in% names(thisData)) {
-                    notUnusable <- thisData$recording_quality_code != 'UNUSABLE' | is.na(thisData$recording_quality_code)
-                    naVals <- naVals & notUnusable
-                }
-            }
-            if(n == 'detections' &&
-               m == 'localization_method_code') {
-                isLocalized <- !is.na(thisData$localization_latitude)
-                naVals <- naVals & isLocalized
-            }
-            
-            if(n == 'detections' &&
-               m == 'localization_depth_method_code') {
-                isLocalizedDepth <- !is.na(thisData$localization_depth_m)
-                naVals <- naVals & isLocalizedDepth
-            }
-            
-            if(any(naVals)) {
-                warns <- addWarning(warns,
-                                    deployment=thisData$deployment_code[naVals],
-                                    row=which(naVals),
-                                    type='NA in Mandatory Field',
-                                    table=n,
-                                    message=paste0("Mandatory column '",
-                                                   m, "' is NA"))
-            }
-        }
+        
         # check some reference tables
         if(n == 'detections') {
             wrongSource <- !thisData$detection_sound_source_code %in% refs$sound_sources$code
@@ -984,15 +999,18 @@ downloadBqMakara <- function(project='ggn-nmfs-pacm-dev-1', dataset='makara') {
     tb_ref <- bq_dataset_query(ds, query = "select * from view_reference_codes")
     df_ref <- bq_table_download(tb_ref)
     
-    tb_org <- bq_dataset_query(ds, query = "select * from view_organization_codes")
-    df_org <- bq_table_download(tb_org)
+    # tb_org <- bq_dataset_query(ds, query = "select * from view_organization_codes")
+    # df_org <- bq_table_download(tb_org)
     
     full_tables <- c('deployments', 
                      'recordings', 
                      'analyses', 
                      'recording_intervals',
                      'tracks',
-                     'sensor_datasets')
+                     'sensor_datasets',
+                     'devices',
+                     'projects',
+                     'sites')
     full_df <- vector('list', length=length(full_tables))
     names(full_df) <- full_tables
     for(i in seq_along(full_df)) {
@@ -1027,25 +1045,25 @@ downloadBqMakara <- function(project='ggn-nmfs-pacm-dev-1', dataset='makara') {
         by=c('id' = 'deployment_id')
     )
     list(db_ref=df_ref,
-         db_org=df_org,
+         # db_org=df_org,
          full_data=full_df)
 }
 
 # transform into list of db$table_name
 formatBqMakara <- function(db_raw) {
-    result <- split(db_raw$db_org, db_raw$db_org$table)
+    # result <- split(db_raw$db_org, db_raw$db_org$table)
+    # result <- lapply(result, function(x) {
+    #     code_prefix <- switch(
+    #         x$table[1],
+    #         'analyses' = 'analysis_code',
+    #         paste0(gsub('s$', '', x$table[1]), '_code')
+    #     )
+    #     names(x)[3] <- code_prefix
+    #     keepCol <- which(sapply(x, function(col) !all(is.na(col))))
+    #     x[keepCol]
+    # })
+    result <- split(db_raw$db_ref, db_raw$db_ref$table)
     result <- lapply(result, function(x) {
-        code_prefix <- switch(
-            x$table[1],
-            'analyses' = 'analysis_code',
-            paste0(gsub('s$', '', x$table[1]), '_code')
-        )
-        names(x)[3] <- code_prefix
-        keepCol <- which(sapply(x, function(col) !all(is.na(col))))
-        x[keepCol]
-    })
-    refs <- split(db_raw$db_ref, db_raw$db_ref$table)
-    refs <- lapply(refs, function(x) {
         if(x$table[1] == 'call_types_sound_sources') {
             # split_code <- str_split(x$code, pattern=':', simplify=TRUE)
             split_code <- t(matrix(unlist(strsplit(x$code, split=':')), nrow=2))
@@ -1062,9 +1080,9 @@ formatBqMakara <- function(db_raw) {
         keepCol <- which(sapply(x, function(col) !all(is.na(col))))
         x[keepCol]
     })
-    for(table in names(refs)) {
-        result[[table]] <- refs[[table]]
-    }
+    # for(table in names(refs)) {
+    #     result[[table]] <- refs[[table]]
+    # }
     
     fulls <- db_raw$full_data
     
