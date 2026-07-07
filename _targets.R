@@ -168,14 +168,16 @@ list(
                        'organization_code',
                        'pacm_permissions',
                        'skip_analysis',
-                       'have_detection_data')
+                       'have_detection_data',
+                       'analysis_organization_code')
         result <- select(
             rt_tracking,
             any_of(c(names, extraCols)),
         ) %>% 
             filter(!skip_analysis) %>% 
             rename(
-                deployment_organization_code = organization_code
+                deployment_organization_code = organization_code,
+                organization_code = analysis_organization_code
             ) %>% 
             mutate(analysis_release_pacm = analysis_release_pacm == 'TRUE',
                    analysis_release_data = analysis_release_data == 'TRUE') %>%
@@ -374,7 +376,7 @@ list(
             distinct(select(analyses, 
                             deployment_organization_code, 
                             deployment_code,
-                            analysis_organization_code
+                            organization_code
             )),
             by='deployment_code'
         )
@@ -531,7 +533,11 @@ list(
     tar_target(combined_data, {
         result <- list(deployments=deployments)
         result$recordings <- recordings
-        result$analyses <- analyses
+        result$analyses <- analyses %>% 
+            mutate(deployment_code = if_else(deployment_organization_code == organization_code,
+                                             deployment_code,
+                                             paste0(deployment_organization_code, ':', deployment_code)
+            ))
         result$detections <- detections
         result$tracks <- tracks
         result$track_positions <- track_positions
@@ -579,7 +585,11 @@ list(
     }, format='file'),
     tar_target(validatr, {
         # add orgs and such if we have them
-        refs <- makaraValidatr::reference_tables
+        if(packageVersion('makaraValidatr')  >= '0.5.0') {
+            refs <- makaraValidatr::load_reference_tables()
+        } else {
+            refs <- makaraValidatr::reference_tables
+        }
         refs$organizations <- bind_rows(
             refs$organizations,
             params$new_org

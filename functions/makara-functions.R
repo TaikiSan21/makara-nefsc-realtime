@@ -139,7 +139,10 @@ addWarning <- function(x, deployment, table, type, message, row=NA) {
 # mandatory is constant list 
 # ncei flag is whether to check columns that are only mandatory for NCEI
 # dropEmpty is flag whether to drop empty non-mandatory columns from output
-checkMakTemplate <- function(x, templates, ncei=FALSE, dropEmpty=FALSE, dropExtra=TRUE, dropMandatoryNA=FALSE) {
+checkMakTemplate <- function(x, templates=NULL, ncei=FALSE, dropEmpty=FALSE, dropExtra=TRUE, dropMandatoryNA=FALSE) {
+    if(is.null(templates)) {
+        templates <- formatBasicTemplates()
+    }
     result <- templates[names(x)[names(x) %in% names(templates)]]
     onlyNotLost <- c('recording_start_datetime',
                      'recording_duration_secs',
@@ -147,8 +150,13 @@ checkMakTemplate <- function(x, templates, ncei=FALSE, dropEmpty=FALSE, dropExtr
                      'recording_sample_rate_khz',
                      'recording_n_channels',
                      'recording_timezone')
-    col_defs <- makaraValidatr::column_definitions
-    refs <- makaraValidatr::reference_tables
+    if(packageVersion('makaraValidatr')  >= '0.5.0') {
+        col_defs <-  makaraValidatr::load_column_definitions()
+        refs <- makaraValidatr::load_reference_tables()
+    } else {
+        col_defs <- makaraValidatr::column_definitions
+        refs <- makaraValidatr::reference_tables
+    }
     mandatory <- lapply(col_defs, function(x) {
         list(
             'always' = x$name[x$required],
@@ -775,10 +783,15 @@ checkDbValues <- function(x, db=NULL, updateDeviceOrgs=TRUE) {
                                                ', but matched multiple other orgs so could not be replaced.'))
         }
     }
-    projCheck <- left_join(x$deployments,
-                           mutate(db$projects, JOINCHECK=TRUE),
-                           by=c('project_code', 'organization_code'))
-    missProj <- is.na(projCheck$JOINCHECK)
+    # projCheck <- left_join(x$deployments,
+    #                        mutate(db$projects, JOINCHECK=TRUE),
+    #                        by=c('project_code', 'organization_code'))
+    # missProj <- is.na(projCheck$JOINCHECK)
+    projCheck <- doJoinCheck(x$deployments, 
+                             db$projects, 
+                             by=c('project_code', 'organization_code'),
+                             verbose=FALSE)
+    missProj <- projCheck$new
     if(any(missProj)) {
         warns <- addWarning(warns, deployment=x$deployments$deployment_code[missProj],
                             row=which(missProj),
@@ -789,10 +802,15 @@ checkDbValues <- function(x, db=NULL, updateDeviceOrgs=TRUE) {
         # warning(sum(missProj), ' deployments (', printN(x$deployments$deployment_code[missProj], Inf),
         #         ') have project codes that are not present in the database')
     }
-    siteCheck <- left_join(x$deployments,
-                           mutate(db$sites, JOINCHECK=TRUE),
-                           by=c('site_code', 'organization_code'))
-    missSite <- is.na(siteCheck$JOINCHECK)
+    # siteCheck <- left_join(x$deployments,
+    #                        mutate(db$sites, JOINCHECK=TRUE),
+    #                        by=c('site_code', 'organization_code'))
+    siteCheck <- doJoinCheck(x$deployments, 
+                             db$sites, 
+                             by=c('site_code', 'organization_code'), 
+                             verbose=FALSE)
+    missSite <- siteCheck$new
+    # missSite <- is.na(siteCheck$JOINCHECK)
     if(any(missSite)) {
         warns <- addWarning(warns, deployment=x$deployments$deployment_code[missSite],
                             row=which(missSite),
@@ -821,6 +839,9 @@ joinRequirements <- list(
     'tracks' = c('organization_code', 'deployment_code', 'track_code'),
     'sensor_datasets' = c('organization_code', 'deployment_code', 'sensor_dataset_code')
 )
+if(packageVersion('makaraValidatr') >= '0.5.0') {
+    joinRequirements$analyses <- c('organization_code', 'deployment_code', 'analysis_code', 'deployment_organization_code')
+}
 # check if these entries are already in Makara using joinReqs above
 checkAlreadyDb <- function(x, db) {
     # tables to not check against
@@ -842,7 +863,29 @@ checkAlreadyDb <- function(x, db) {
                                                                 format='%Y-%m-%d %H:%M:%S')
         }
         if(j %in% names(x)) {
+            if(j == 'analyses') {
+                # ORG:DEP_CODE pass ORG to dep_org
+                noDepOrg <- FALSE
+                if(!'deployment_organization_code' %in% names(x[[j]])) {
+                    x[[j]]$deployment_organization_code <- x[[j]]$organization_code
+                    noDepOrg <- TRUE
+                }
+                origDep <- x[[j]]$deployment_code
+                for(i in seq_along(origDep)) {
+                    if(grepl(':', origDep[i])) {
+                        org_dep <- strsplit(origDep[i], ':')[[1]]
+                        x[[j]]$deployment_organization_code[i] <- org_dep[1]
+                        x[[j]]$deployment_code[i] <- org_dep[2]
+                    }
+                }
+            }
             x[[j]] <- doJoinCheck(x[[j]], db[[j]], by=joinRequirements[[j]], name=j)
+            if(j == 'analyses') {
+                if(isTRUE(noDepOrg)) {
+                    x[[j]]$deployment_organization_code <- NULL
+                }
+                x[[j]]$deployment_code <- origDep
+            }
         }
     }
     
@@ -863,6 +906,10 @@ checkDetectionData <- function(x) {
                            deployment_code, 
                            analysis_code,
                            analysis_sound_source_codes))
+    orgFix <- fixOrgPrefix(ana, columns=c('deployment_code', 'analysis_code'))
+    for(c in names(orgFix)) {
+        ana[[c]] <- orgFix[[c]]$new
+    }
     warns <- vector('list', length=0)
     anaCheck <- doJoinCheck(dets, ana, by=c('deployment_code', 'analysis_code'), verbose=F)
     if(any(anaCheck$new)) {
@@ -900,11 +947,18 @@ checkDetectionData <- function(x) {
 }
 
 # check if x is already in y by joining
-doJoinCheck <- function(x, y, by, name=NULL, ix=FALSE, verbose=TRUE) {
+doJoinCheck <- function(x, y, by, name=NULL, ix=FALSE, 
+                        fixOrgs=TRUE, orgCol='organization_code', verbose=TRUE) {
     # x <- select(x, all_of(by))
     y <- distinct(select(y, all_of(by)))
     if(isTRUE(ix)) {
         y$JOINIX <- 1:nrow(y)
+    }
+    if(fixOrgs) {
+        orgFix <- fixOrgPrefix(x, columns=by, orgCol=orgCol)
+        for(c in names(orgFix)) {
+            x[[c]] <- orgFix[[c]]$new
+        }
     }
     y$JOINCHECK <- TRUE
     x <- left_join(
@@ -921,7 +975,43 @@ doJoinCheck <- function(x, y, by, name=NULL, ix=FALSE, verbose=TRUE) {
         }
         message(sum(newX), ' out of ', nrow(x), name, ' are new (not yet in Makara)')
     }
+    if(fixOrgs) {
+        for(c in names(orgFix)) {
+            x[[c]] <- orgFix[[c]]$orig
+        }
+    }
     x
+}
+
+fixOrgPrefix <- function(x, columns, orgCol='organization_code') {
+    # codes <- grep('_code', names(x), value=TRUE)
+    columns <- columns[columns != orgCol]
+    columns <- grep('_code', columns, value=TRUE)
+    hasOrg <- names(x) == orgCol
+    # codes <- codes[!hasOrg]
+    result <- vector('list', length(columns))
+    names(result) <- columns
+    if(any(hasOrg)) {
+        orgs <- x[[orgCol]]
+    }
+    for(c in columns) {
+        orig <- x[[c]]
+        new <- x[[c]]
+        hasSplit <- grepl(':', orig)
+        for(i in which(hasSplit)) {
+            org_val <- strsplit(orig[i], ':')[[1]]
+            new[i] <- org_val[2]
+            if(any(hasOrg)) {
+                orgs[i] <- org_val[1]
+            }
+        }
+        result[[c]] <- list(orig=orig, new=new)
+    }
+    if(any(hasOrg)) {
+        result[[orgCol]] <- list(orig=x[[orgCol]], new=orgs)
+        x[[orgCol]] <- orgs
+    }
+    result
 }
 
 # Only works after `checkAlreadyDb` run to create "new" column
@@ -966,7 +1056,11 @@ writeTemplateOutput <- function(data, folder='outputs') {
 # folder containing template .csv files
 # applies column types for enforcing later
 formatBasicTemplates <- function() {
-    col_defs <- makaraValidatr::column_definitions
+    if(packageVersion('makaraValidatr')  >= '0.5.0') {
+        col_defs <-  makaraValidatr::load_column_definitions()
+    } else {
+        col_defs <- makaraValidatr::column_definitions
+    }
     
     result <- lapply(col_defs, function(x) {
         df <- data.frame(
@@ -1136,6 +1230,24 @@ checkDbReplacements <- function(x, db, replaceWithNA=FALSE) {
         if(t == 'recording_intervals') {
             db[[t]]$recording_interval_start_datetime <- psxTo8601(db[[t]]$recording_interval_start_datetime)
         }
+        if(t == 'analyses') {
+            # ORG:DEP_CODE pass ORG to dep_org
+            noDepOrg <- FALSE
+            if(!'deployment_organization_code' %in% names(x[[t]])) {
+                x[[t]]$deployment_organization_code <- x[[t]]$organization_code
+                noDepOrg <- TRUE
+            }
+            origDep <- x[[t]]$deployment_code
+            for(i in seq_along(origDep)) {
+                if(grepl(':', origDep[i])) {
+                    org_dep <- strsplit(origDep[i], ':')[[1]]
+                    x[[t]]$deployment_organization_code[i] <- org_dep[1]
+                    x[[t]]$deployment_code[i] <- org_dep[2]
+                }
+            }
+        }
+        # x[[j]] <- doJoinCheck(x[[j]], db[[j]], by=joinRequirements[[j]], name=j)
+        
         this <- doJoinCheck(x[[t]], db[[t]], by=joinRequirements[[t]], ix=TRUE, verbose=FALSE)
         diffs <- checkTableDiffs(this, db[[t]])
         if(nrow(diffs) > 0) {
@@ -1175,7 +1287,12 @@ checkDbReplacements <- function(x, db, replaceWithNA=FALSE) {
                                                ', NEW:', diffs$new)
             )
         }
-        
+        if(t == 'analyses') {
+            if(isTRUE(noDepOrg)) {
+                x[[t]]$deployment_organization_code <- NULL
+            }
+            x[[t]]$deployment_code <- origDep
+        }
     }
     if(!'warnings' %in% names(x)) {
         x$warnings <- warns
