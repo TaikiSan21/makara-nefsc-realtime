@@ -567,7 +567,7 @@ list(
                                 templates=templates,
                                 ncei=FALSE,
                                 dropEmpty = TRUE)
-        out <- checkDbValues(out, db, updateDeviceOrgs=params$update_device_orgs)
+        out <- checkDbValues(out, db, updateOrgs=params$update_device_orgs)
         out <- checkDetectionData(out)
         out <- checkDbReplacements(out, db, replaceWithNA=params$replace_db_with_na)
         checkWarnings(out)
