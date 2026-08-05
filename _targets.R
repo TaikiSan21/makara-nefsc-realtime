@@ -391,11 +391,11 @@ list(
             )
             # result$analysis_code <- constants$analysis_code
         }
-        names <- names(templates$detections)
-        result <- select(
-            result,
-            any_of(c(names))
-        )
+        # names <- names(templates$detections)
+        # result <- select(
+        #     result,
+        #     any_of(c(names))
+        # )
         result
     }),
     # summary to use for filling NA vals later
@@ -538,7 +538,11 @@ list(
                                              deployment_code,
                                              paste0(deployment_organization_code, ':', deployment_code)
             ))
-        result$detections <- detections
+        result$detections <- detections %>% 
+            mutate(deployment_code = if_else(deployment_organization_code == organization_code,
+                                             deployment_code,
+                                             paste0(deployment_organization_code, ':', deployment_code)
+            ))
         result$tracks <- tracks
         result$track_positions <- track_positions
         
