@@ -619,7 +619,25 @@ checkDbValues <- function(x, db=NULL, updateOrgs=TRUE) {
         )
         db$sites <- distinct(select(db$sites, organization_code, site_code))
     }
+
     warns <- vector('list', length=0)
+    # check org codes exist
+    allOrgs <- unique(unlist(lapply(x, function(df) {
+        if('organization_code' %in% names(df)) {
+            return(unique(df[['organization_code']]))
+        }
+        NULL
+    })))
+    missOrg <- !allOrgs %in% db$organizations$code
+    if(any(missOrg)) {
+        warns <- addWarning(warns,
+                            deployment='',
+                            table='',
+                            type="New 'organization_code'",
+                            message=paste0('organization_code ', 
+                                           printN(allOrgs[missOrg]),
+                                           ' is not present in database'))
+    }
     # x is data table to check
     # y is db table to check against
     # by is column in x vs column in y
