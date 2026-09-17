@@ -300,10 +300,10 @@ list(
                isTRUE(dl_status$skip[i])) {
                 next
             }
-            tryDl <- try(download.file(url=dl_status$url[i],
+            tryDl <- suppressWarnings(try(download.file(url=dl_status$url[i],
                                        destfile=dl_status$file[i],
                                        quiet=TRUE),
-                         silent = TRUE)
+                         silent = TRUE))
             # if download fails
             if(inherits(tryDl, 'try-error') ||
                tryDl != 0) {

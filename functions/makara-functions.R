@@ -212,13 +212,15 @@ checkMakTemplate <- function(x, templates=NULL, ncei=FALSE, dropEmpty=FALSE, dro
         # checking that i didnt goof mandatory names
         missMand <- !thisMand  %in% names(thisTemp)
         if(any(missMand)) {
-            warning(sum(missMand), ' misspelled mandatory names for ', n,
+            warning(sum(missMand), ' misspelled mandatory names for ', 
+                    n, ': ',
                     printN(thisMand[missMand]))
         }
         if(isTRUE(ncei)) {
             missNcei <- !thisNcei %in% names(thisTemp)
             if(any(missNcei)) {
-                warning(sum(missNcei), 'misspelled ncei names for ', n, 
+                warning(sum(missNcei), 'misspelled ncei names for ', 
+                        n, ': ', 
                         printN(thisNcei[missNcei]))
             }
             missNcei <- !thisNcei %in% names(thisData)
@@ -243,7 +245,7 @@ checkMakTemplate <- function(x, templates=NULL, ncei=FALSE, dropEmpty=FALSE, dro
         uniqueCols <- uniqueConditions[[n]]
         if(!is.null(uniqueCols)) {
             checkDupeDeps <- thisData %>% 
-                summarise(dupe = n() > 1, .by=all_of(uniqueCols))
+                summarise(dupe = n() > 1, .by=any_of(uniqueCols))
             dupeDeps <- checkDupeDeps$dupe
             codePrint <- paste0('"', paste0(uniqueCols, collapse='-'), '"')
             if(any(dupeDeps)) {
