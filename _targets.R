@@ -572,7 +572,7 @@ list(
                                 ncei=FALSE,
                                 dropEmpty = TRUE)
         out <- checkDbValues(out, db, updateOrgs=params$update_device_orgs)
-        out <- checkDetectionData(out)
+        out <- checkDetectionData(out, db)
         out <- checkDbReplacements(out, db, replaceWithNA=params$replace_db_with_na)
         checkWarnings(out)
         out
