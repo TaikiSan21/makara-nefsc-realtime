@@ -943,9 +943,13 @@ doJoinCheck <- function(x, y, by, name=NULL, ix=FALSE,
                 }
             }
         }
-        orgFix <- fixOrgPrefix(x, columns=xBy, orgCol=orgCol)
-        for(c in names(orgFix)) {
-            x[[c]] <- orgFix[[c]]$new
+        orgFixX <- fixOrgPrefix(x, columns=xBy, orgCol=orgCol)
+        for(c in names(orgFixX)) {
+            x[[c]] <- orgFixX[[c]]$new
+        }
+        orgFixY <- fixOrgPrefix(y, columns=xBy, orgCol=orgCol)
+        for(c in names(orgFixY)) {
+            y[[c]] <- orgFixY[[c]]$new
         }
     }
     y$JOINCHECK <- TRUE
@@ -965,8 +969,11 @@ doJoinCheck <- function(x, y, by, name=NULL, ix=FALSE,
         message(sum(newX), ' out of ', nrow(x), name, ' are new (not yet in Makara)')
     }
     if(fixOrgs) {
-        for(c in names(orgFix)) {
-            x[[c]] <- orgFix[[c]]$orig
+        for(c in names(orgFixX)) {
+            x[[c]] <- orgFixX[[c]]$orig
+        }
+        for(c in names(orgFixY)) {
+            y[[c]] <- orgFixY[[c]]$orig
         }
     }
     x
