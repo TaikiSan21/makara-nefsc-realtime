@@ -1034,10 +1034,15 @@ fixUTF8 <- function(x) {
 }
 
 # writes template formatted CSV files to a folder - last step
-writeTemplateOutput <- function(data, folder='outputs') {
+writeTemplateOutput <- function(data, folder='outputs', splitOrgs=TRUE) {
     if(!dir.exists(folder)) {
         dir.create(folder)
     }
+    orgs <- unlist(sapply(data, function(x) {
+        if('organization_code' %in% names(x)) {
+            return(unique(x$organization_code))
+        }
+        NULL}))
     for(n in names(data)) {
         outFile <- file.path(folder, paste0(n, '.csv'))
         if(length(data[[n]]) == 0) {
@@ -1046,6 +1051,28 @@ writeTemplateOutput <- function(data, folder='outputs') {
         data[[n]] %>% 
             fixUTF8 %>% 
             write.csv(file=outFile, row.names=FALSE, na='')
+        if(isFALSE(splitOrgs)) {
+            next
+        }
+        if(!'organization_code' %in% names(data[[n]])) {
+            next
+        }
+        lapply(
+            split(data[[n]], data[[n]]$organization_code), function(x) {
+                if(is.null(x) ||
+                   nrow(x) == 0) {
+                    return()
+                }
+                outDir <- file.path(folder, x$organization_code[1])
+                if(!dir.exists(outDir)) {
+                    dir.create(outDir)
+                }
+                outFile <- file.path(outDir, paste0(n, '.csv'))
+                x %>% 
+                    fixUTF8 %>% 
+                    write.csv(file=outFile, row.names=FALSE, na='')
+            }
+        )
     }
 }
 

@@ -61,7 +61,7 @@ list(
             # flag to skip all work for active deployments
             skip_active_deployment = FALSE,
             # flag to skip data already in Makara (unless needs update)
-            skip_already_makara = FALSE,
+            skip_already_makara = TRUE,
             # split into 1 ana per species vs 1 ana all species
             split_analyses = FALSE,
             # fill rec start/end with analysis time for handful of deployments only
