@@ -94,7 +94,7 @@ printN <- function(x, n=6, collapse=', ', maxChar=200L) {
 # formats a POSIXct object to 8601 format
 psxTo8601 <- function(x) {
     if(all(is.na(x))) {
-        return(x)
+        return(rep(NA_character_, length(x)))
     }
     if(is.character(x)) {
         return(x)
