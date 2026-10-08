@@ -66,7 +66,7 @@ combineColumns <- function(x, into, columns, prefix=NULL, sep='; ', warnMissing=
         }
     }
     x <- unite(x, !!into, any_of(c(into, columns)), sep=sep, na.rm=TRUE, remove=remove)
-    if(isFALSE(remove)) {
+    if(isFALSE(remove) && !is.null(prefix)) {
         for(i in seq_along(columns)) {
             if(columns[i] != into) {
                 x[[columns[i]]] <- x[[TEMP_COLS[i]]]
@@ -93,6 +93,9 @@ printN <- function(x, n=6, collapse=', ', maxChar=200L) {
 
 # formats a POSIXct object to 8601 format
 psxTo8601 <- function(x) {
+    if(all(is.na(x))) {
+        return(x)
+    }
     if(is.character(x)) {
         return(x)
     }
@@ -585,28 +588,18 @@ makeValidTime <- function(x) {
     if(inherits(x, 'POSIXct')) {
         return(psxTo8601(x))
     }
-    out <- rep(NA_character_, length(x))
-    for(i in seq_along(x)) {
-        val <- x[i]
-        if(is.na(val) || val == '') {
-            next
-        }
-        datetime <- parse_date_time(
-            val,
-            orders=c('%Y-%m-%d %H:%M:%S',
-                     '%Y/%m/%d %H:%M:%S',
-                     '%Y-%m-%dT%H:%M:%SZ',
-                     '%Y-%m-%dT%H:%M:%S%z'),
-            truncated = 3,
-            tz='UTC',
-            quiet=TRUE,
-            exact=TRUE)
-        if(is.na(datetime)) {
-            next
-        }
-        out[i] <- psxTo8601(datetime)
-    }
-    out
+    x[x == ''] <- NA
+    datetime <- parse_date_time(
+        x,
+        orders=c('%Y-%m-%d %H:%M:%S',
+                 '%Y/%m/%d %H:%M:%S',
+                 '%Y-%m-%dT%H:%M:%SZ',
+                 '%Y-%m-%dT%H:%M:%S%z'),
+        truncated = 3,
+        tz='UTC',
+        quiet=TRUE,
+        exact=TRUE)
+    psxTo8601(datetime)
 }
 
 # Check if codes being used are actually in database
@@ -694,6 +687,7 @@ checkWithOrgs <- function(x, y, by, table='', update=TRUE) {
     if(!is.null(names(by))) {
         xCol[names(by) != ''] <- names(by)[names(by) != '']
     }
+    y <- filter(y, organization_code != 'TEST')
     checkDf <- x %>% 
         mutate(ORIGROW=seq_len(n()),
                '{xCol}' := strsplit(.data[[xCol]], ',')) %>% 
@@ -921,6 +915,50 @@ checkDetectionData <- function(x, db) {
         x$warnings <- warns
     } else {
         x$warnings <- bind_rows(x$warnings, warns)
+    }
+    x
+}
+
+metaChecks <- list(
+    'sensor_datasets' = list('deployments'=c('organization_code','deployment_code')),
+    'recording_intervals' = list('recordings'=c('organization_code', 'deployment_code', 'recording_code')),
+    'tracks' = list('deployments' = c('organization_code','deployment_code'))
+)
+# for sensor_datasets, deployments$deployment_code
+# for recording_intervals, recordings$deployment_code, recording_code
+# tracks, deployments$deployment_code
+checkMetadataExists <- function(x, db) {
+    if('deployments' %in% names(x)) {
+        db$deployments <- bind_rows(
+            db$deployments,
+            select(x$deployments, deployment_code, organization_code)
+        )
+    }
+    if('recordings' %in% names(x)) {
+        db$recordings <- bind_rows(
+            db$recordings,
+            select(x$recordings, deployment_code, recording_code, organization_code)
+        )
+    }
+    warns <- vector('list', length=0)
+    for(n in names(metaChecks)) {
+        if(!n %in% names(x)) {
+            next
+        }
+        thisCheck <- metaChecks[[n]]
+        doCheck <- doJoinCheck(x[[n]], y=db[[names(thisCheck)]], by=thisCheck[[1]], verbose=T)
+        isMissing <- doCheck$new
+        if(any(isMissing)) {
+            x <- combineColumns(x, into='TEMPMESSAGE', columns=thisCheck[[1]], sep=':', remove=FALSE, warnMissing=FALSE)
+            warns <- addWarning(warns,
+                                deployment=x$deployment_code[isMissing],
+                                table=n,
+                                type='Missing Metadata',
+                                message=paste0('Missing metadata for entry ', 
+                                               x$TEMPMESSAGE[isMissing]
+                                ))
+            x$TEMPMESSAGE <- NULL
+        }
     }
     x
 }
