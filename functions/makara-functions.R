@@ -1151,7 +1151,7 @@ formatBasicTemplates <- function() {
 
 downloadBqMakara <- function(project='ggn-nmfs-pacm-dev-1', dataset='makara') {
     ds <- bq_dataset(project, dataset)
-    tb_ref <- bq_dataset_query(ds, query = "select * from view_reference_codes")
+    tb_ref <- bq_dataset_query(ds, query = "select * from v_reference")
     df_ref <- bq_table_download(tb_ref)
     
     # tb_org <- bq_dataset_query(ds, query = "select * from view_organization_codes")
@@ -1198,6 +1198,19 @@ downloadBqMakara <- function(project='ggn-nmfs-pacm-dev-1', dataset='makara') {
         full_df$deployments,
         devd,
         by=c('id' = 'deployment_id')
+    )
+    query <- "select rd.recording_id, STRING_AGG(dev.device_code, ',') recording_device_codes from
+        recordings_devices rd
+        left join devices dev
+        on dev.id = rd.device_id
+        group by rd.recording_id
+        "
+    devq <- bq_dataset_query(ds, query)
+    devd <- bq_table_download(devq)
+    full_df$recordings <- left_join(
+        full_df$recordings,
+        devd,
+        by=c('id'='recording_id')
     )
     list(db_ref=df_ref,
          # db_org=df_org,
