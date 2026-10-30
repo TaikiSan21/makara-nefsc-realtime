@@ -1169,9 +1169,15 @@ downloadBqMakara <- function(project='ggn-nmfs-pacm-dev-1', dataset='makara') {
     full_df <- vector('list', length=length(full_tables))
     names(full_df) <- full_tables
     for(i in seq_along(full_df)) {
-        query <- paste0('select * from ', full_tables[i])
+        query <- paste0("select * from ", 
+                        full_tables[i],
+                        " where organization_code != 'TEST'")
+        if(full_tables[i] %in% c('recording_intervals')) {
+            query <- paste0("select * from ", 
+                   full_tables[i])
+        }
         if(full_tables[i] == 'deployments') {
-            query <- 'select * from 
+            query <- "select * from 
             deployments d
             left join 
             (select id, project_code from projects) p
@@ -1179,7 +1185,9 @@ downloadBqMakara <- function(project='ggn-nmfs-pacm-dev-1', dataset='makara') {
             left join
             (select id, site_code from sites) s
             on s.id = d.site_id
-            '
+            where
+            d.organization_code != 'TEST'
+            "
         }
         q <- bq_dataset_query(ds, query=query)
         d <- bq_table_download(q)
