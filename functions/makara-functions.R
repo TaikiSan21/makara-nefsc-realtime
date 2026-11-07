@@ -37,9 +37,14 @@ myRenamer <- function(x, map) {
 combineColumns <- function(x, into, columns, prefix=NULL, sep='; ', warnMissing=TRUE, remove=TRUE) {
     missing <- !columns %in% names(x)
     if(all(missing)) {
-        warning('None of the column(s) ',
-                printN(columns),
-                ' were present in data, cannot combine,')
+        if(!into %in% names(x)) {
+            x[[into]] <- NA_character_
+        }
+        if(isTRUE(warnMissing)) {
+            warning('None of the column(s) ',
+                    printN(columns),
+                    ' were present in data, cannot combine')
+        }
         return(x)
     }
     if(sum(missing) > 0 && isTRUE(warnMissing)) {
@@ -910,6 +915,56 @@ checkDetectionData <- function(x, db) {
                                            speciesCheck$detection_sound_source_code[speciesCheck$new],
                                            "' is not present in analysis_sound_source_codes")
         )
+    }
+    anaTime <- select(x$analyses,
+                      deployment_code,
+                      analysis_code,
+                      analysis_start_datetime,
+                      analysis_end_datetime) %>% 
+        mutate(analysis_start_datetime = ymd_hms(analysis_start_datetime),
+               analysis_end_datetime = ymd_hms(analysis_end_datetime))
+    detTime <- select(x$detections,
+                      deployment_code,
+                      analysis_code,
+                      detection_start_datetime,
+                      detection_end_datetime) %>% 
+        mutate(detection_start_datetime = ymd_hms(detection_start_datetime),
+               detection_end_datetime = ymd_hms(detection_end_datetime)) %>% 
+        group_by(deployment_code, analysis_code) %>% 
+        summarise(det_start = min(detection_start_datetime, na.rm=TRUE),
+                  det_end = max(detection_end_datetime, na.rm=TRUE))
+    anaTime <- left_join(anaTime,
+                         detTime,
+                         by=c('deployment_code', 'analysis_code')) %>% 
+        mutate(isBefore = det_start < analysis_start_datetime,
+               isAfter = det_end > analysis_end_datetime)
+    anaTime$isBefore[is.na(anaTime$isBefore)] <- FALSE
+    anaTime$isAfter[is.na(anaTime$isAfter)] <- FALSE
+    if(any(anaTime$isBefore)) {
+        warns <- addWarning(warns,
+                            deployment=anaTime$deployment_code[anaTime$isBefore],
+                            row=which(anaTime$isBefore),
+                            type='Analysis Starts After Detections',
+                            table='analyses',
+                            message=paste0('analysis_start_datetime ',
+                                          psxTo8601(anaTime$analysis_start_datetime[anaTime$isBefore]),
+                                           ' is after earliest detection time (',
+                                           psxTo8601(anaTime$det_start[anaTime$isBefore]),
+                                          ')'
+                            ))
+    }
+    if(any(anaTime$isAfter)) {
+        warns <- addWarning(warns,
+                            deployment=anaTime$deployment_code[anaTime$isAfter],
+                            row=which(anaTime$isAfter),
+                            type='Analysis Ends Before Detections',
+                            table='analyses',
+                            message=paste0('analysis_end_datetime ',
+                                           psxTo8601(anaTime$analysis_end_datetime[anaTime$isAfter]),
+                                           ' is before latest detection time (',
+                                           psxTo8601(anaTime$det_end[anaTime$isAfter]),
+                                           ')'
+                            ))
     }
     if(!'warnings' %in% names(x)) {
         x$warnings <- warns
