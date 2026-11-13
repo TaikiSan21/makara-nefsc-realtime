@@ -68,6 +68,8 @@ list(
             fill_recording_times = TRUE,
             # logical flag to not write detection CSV - ignore just for testing
             skip_writing_detections = FALSE,
+            # number of hours analysis range can differ from detection range
+            analysis_hour_buffer = 1,
             update_device_orgs = TRUE
         )
     }),
@@ -574,7 +576,7 @@ list(
                                 ncei=FALSE,
                                 dropEmpty = TRUE)
         out <- checkDbValues(out, db, updateOrgs=params$update_device_orgs)
-        out <- checkDetectionData(out, db)
+        out <- checkDetectionData(out, db, hourBuffer = params$analysis_hour_buffer)
         out <- checkDbReplacements(out, db, replaceWithNA=params$replace_db_with_na)
         checkWarnings(out)
         out

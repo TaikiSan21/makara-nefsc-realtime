@@ -849,7 +849,7 @@ checkAlreadyDb <- function(x, db, verbose=TRUE) {
     x
 }
 
-checkDetectionData <- function(x, db) {
+checkDetectionData <- function(x, db, hourBuffer = 1) {
     # only if dets and ana are in
     if(!all(c('detections', 'analyses') %in% names(x))) {
         return(x)
@@ -932,12 +932,15 @@ checkDetectionData <- function(x, db) {
                detection_end_datetime = ymd_hms(detection_end_datetime)) %>% 
         group_by(deployment_code, analysis_code) %>% 
         summarise(det_start = min(detection_start_datetime, na.rm=TRUE),
-                  det_end = max(detection_end_datetime, na.rm=TRUE))
+                  det_end = max(detection_end_datetime, na.rm=TRUE),
+                  .groups='drop_last')
     anaTime <- left_join(anaTime,
                          detTime,
                          by=c('deployment_code', 'analysis_code')) %>% 
-        mutate(isBefore = det_start < analysis_start_datetime,
-               isAfter = det_end > analysis_end_datetime)
+        mutate(hoursBefore = as.numeric(difftime(analysis_start_datetime, det_start, units='hours')),
+               hoursAfter = as.numeric(difftime(det_end, analysis_end_datetime, units='hours')),
+               isBefore = hoursBefore > hourBuffer,
+               isAfter = hoursAfter > hourBuffer)
     anaTime$isBefore[is.na(anaTime$isBefore)] <- FALSE
     anaTime$isAfter[is.na(anaTime$isAfter)] <- FALSE
     if(any(anaTime$isBefore)) {
