@@ -29,7 +29,7 @@ tar_source('functions/makara-realtime-functions.R')
 
 
 # trigger reloading database from bigquery
-reload_database <- FALSE
+reload_database <- TRUE
 
 # dont change below
 if(!tar_exist_objects('db_raw')) {
@@ -406,11 +406,13 @@ list(
     tar_target(deployments, {
         names <- names(templates$deployments)
         extraCols <- c('metadata_in_makara',
-                       'platform_status')
+                       'platform_status',
+                       'analysis_end_datetime')
         result <- select(
             rt_tracking,
             any_of(c(names, extraCols))
-        )
+        ) %>% 
+            rename('recovery_datetime' = 'analysis_end_datetime')
         result$dynamic_management_platform <- as.logical(result$dynamic_management_platform)
         numCols <- c('deployment_latitude', 
                      'deployment_longitude',
